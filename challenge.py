@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pandas as pd
 
 from analysis import trend_analysis
@@ -90,6 +92,32 @@ def _neighbour_rows(plan: Plan, variable: str, full_record: pd.Series) -> list[C
     return rows
 
 
+def _verdict(p: float, slope: float) -> str:
+    if p < 0.05 and slope > 0:
+        return "significant increase"
+    if p < 0.05 and slope < 0:
+        return "significant decrease"
+    return "not enough evidence"
+
+
+def _method_rows(plan: Plan, variable: str, full_record: pd.Series, baseline: TrendResult) -> list[ChallengeRow]:
+    rows = [ChallengeRow("method", "Method: OLS (baseline)", baseline, "Primary result: OLS anomaly trend; uncertainty uses the stated rough AR(1) effective-sample-size adjustment.")]
+    hac = trend_analysis(plan, variable, load_series_for_plan(plan, variable), reference_series=full_record, method="HAC cross-check")
+    hac = replace(hac, ci=hac.hac_ci, p=hac.hac_p, verdict=_verdict(hac.hac_p, hac.slope_per_decade))
+    rows.append(ChallengeRow("method", "Method: HAC/Newey–West", hac,
+                             "Same OLS slope; 95% interval and p-value from the Newey–West (12-month Bartlett) standard error; verdict from the HAC p-value."))
+    sen = baseline.sen_per_decade
+    agrees = (sen > 0) == (baseline.slope_per_decade > 0) and sen != 0
+    nan2 = (float("nan"), float("nan"))
+    sen_result = replace(baseline, slope_per_decade=sen, ci=nan2, p=float("nan"), hac_p=float("nan"), hac_ci=nan2,
+                         verdict="descriptive only",
+                         settings={**baseline.settings, "method": "seasonal Sen cross-check", "sen_agrees_in_sign_with_ols": agrees})
+    rows.append(ChallengeRow("method", f"Method: seasonal Sen’s slope ({'agrees' if agrees else 'DISAGREES'} in sign with OLS)", sen_result,
+                             "Median within-calendar-month pairwise slope; descriptive only. No significance test: seasonal Mann–Kendall "
+                             "gave 22% false positives on autocorrelated data in our null simulation."))
+    return rows
+
+
 def build_challenge_rows(plan: Plan, baseline: TrendResult) -> list[ChallengeRow]:
     variable = plan.variables[0]
     full_record = load_full_series(variable, plan.place, plan.lat, plan.lon)
@@ -97,12 +125,7 @@ def build_challenge_rows(plan: Plan, baseline: TrendResult) -> list[ChallengeRow
     rows += _date_rows(plan, variable, full_record)
     rows += _neighbour_rows(plan, variable, full_record)
 
-    rows.append(ChallengeRow("method", "Method: OLS (baseline)", baseline, "Primary result: OLS anomaly trend; uncertainty uses the stated rough AR(1) effective-sample-size adjustment."))
-    hac_result = trend_analysis(plan, variable, load_series_for_plan(plan, variable), reference_series=full_record, method="HAC cross-check")
-    rows.append(ChallengeRow("method", "Method: HAC/Newey–West", hac_result, "Keeps the OLS slope; compare the fixed 12-month HAC p-value in the result settings and cross-check."))
-    sen_result = trend_analysis(plan, variable, load_series_for_plan(plan, variable), reference_series=full_record, method="seasonal Sen cross-check")
-    sen_result.settings["cross_check_sen_slope_per_decade"] = sen_result.sen_per_decade
-    rows.append(ChallengeRow("method", "Method: seasonal Sen’s slope", sen_result, "Reports the median within-calendar-month pairwise slope as a robust slope cross-check; it does not replace the primary verdict."))
+    rows += _method_rows(plan, variable, full_record, baseline)
 
     data = load_series_for_plan(plan, variable)
     for label, threshold, month_threshold, note in (

@@ -75,6 +75,11 @@ def trend_figure(series: pd.Series, anomalies: pd.Series, result, unit: str) -> 
     return fig
 
 
+def _num(value: float, fmt: str = "{:.3f}") -> str:
+    """Table cell text; blank for values that are not computed (NaN)."""
+    return fmt.format(value) if math.isfinite(value) else ""
+
+
 def _jsonable(obj):
     if isinstance(obj, float) and not math.isfinite(obj):
         return None
@@ -149,10 +154,10 @@ def render_results(bundle: dict) -> None:
             "Check": row.check,
             "Variant": row.label,
             f"Slope ({unit}/decade)": round(r.slope_per_decade, 3),
-            "95% low": round(r.ci[0], 3),
-            "95% high": round(r.ci[1], 3),
-            "p": f"{r.p:.3g}",
-            "HAC p": f"{r.hac_p:.3g}",
+            "95% low": _num(r.ci[0]),
+            "95% high": _num(r.ci[1]),
+            "p": _num(r.p, "{:.3g}"),
+            "HAC p": _num(r.hac_p, "{:.3g}"),
             "Coverage": f"{r.coverage:.1%}",
             "Verdict": r.verdict,
             "Passes threshold": ("yes" if r.settings.get("coverage_passes_variant") else "no") if row.check == "coverage" else "",

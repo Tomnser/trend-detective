@@ -31,7 +31,8 @@ class TrendResult:
     slope_per_decade: float
     ci: tuple[float, float]
     p: float
-    verdict: Literal["significant increase", "significant decrease", "not enough evidence"]
+    # "descriptive only": a slope shown without a significance test (seasonal Sen row).
+    verdict: Literal["significant increase", "significant decrease", "not enough evidence", "descriptive only"]
     n: int
     n_eff: float
     r1: float
@@ -41,6 +42,7 @@ class TrendResult:
     hac_p: float
     settings: dict = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    hac_ci: tuple[float, float] = (float("nan"), float("nan"))  # 95% normal CI from the HAC SE, per decade
 
 
 @dataclass

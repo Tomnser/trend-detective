@@ -33,8 +33,8 @@ def validate_plan(plan: Plan, series: pd.Series | None = None) -> Validation:
     return Validation("supported", "Coverage and variable meet the configured rules.")
 
 
-def _hac_p_value(x: np.ndarray, y: np.ndarray, beta: np.ndarray, residuals: np.ndarray, max_lag: int = 12) -> float:
-    """Newey-West (Bartlett weights), with a documented fixed 12-month lag."""
+def _hac_se(x: np.ndarray, y: np.ndarray, residuals: np.ndarray, max_lag: int = 12) -> float:
+    """Newey-West (Bartlett weights) standard error of the slope, fixed 12-month lag."""
     n = len(y)
     design = np.column_stack((np.ones(n), x))
     lag = min(max_lag, max(n - 1, 0))
@@ -46,11 +46,25 @@ def _hac_p_value(x: np.ndarray, y: np.ndarray, beta: np.ndarray, residuals: np.n
         meat += weight * (gamma + gamma.T)
     bread = np.linalg.pinv(design.T @ design)
     covariance = bread @ meat @ bread
-    se = float(np.sqrt(max(covariance[1, 1], 0.0)))
+    return float(np.sqrt(max(covariance[1, 1], 0.0)))
+
+
+def _hac_p_value(x: np.ndarray, y: np.ndarray, beta: np.ndarray, residuals: np.ndarray, max_lag: int = 12) -> float:
+    """Two-sided normal p-value of the slope using the HAC standard error."""
+    se = _hac_se(x, y, residuals, max_lag)
     if not np.isfinite(se) or se == 0:
         return 1.0
     z = abs(float(beta[1]) / se)
     return float(2.0 * stats.norm.sf(z))
+
+
+def _hac_ci_per_decade(beta: np.ndarray, x: np.ndarray, y: np.ndarray, residuals: np.ndarray, max_lag: int = 12) -> tuple[float, float]:
+    """95% normal interval slope +/- 1.96 * SE_HAC, per decade (same distribution as hac_p)."""
+    se = _hac_se(x, y, residuals, max_lag)
+    if not np.isfinite(se) or se == 0:
+        return (float("nan"), float("nan"))
+    z = float(stats.norm.ppf(0.975))
+    return (float((beta[1] - z * se) * 10.0), float((beta[1] + z * se) * 10.0))
 
 
 def years_to_detect(sigma_n: float, omega_per_year: float, phi: float) -> float:
@@ -126,6 +140,7 @@ def trend_analysis(
     coverage = coverage_ok(series)[1]["frac_present"]
     sen = seasonal_sen_slope(anomalies)
     hac_p = _hac_p_value(x, y, beta, residuals, max_lag=12)
+    hac_ci = _hac_ci_per_decade(beta, x, y, residuals, max_lag=12)
     # Weatherhead et al. 1998; beta[1] is the slope per YEAR (x is in decimal years).
     sigma_n = float(np.std(residuals, ddof=1)) if n > 1 else 0.0
     years_needed = years_to_detect(sigma_n, float(beta[1]), r1)
@@ -158,6 +173,7 @@ def trend_analysis(
         years_needed=years_needed,
         sen_per_decade=float(sen),
         hac_p=hac_p,
+        hac_ci=hac_ci,
         settings=settings,
         warnings=warnings,
     )
