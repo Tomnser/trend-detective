@@ -1,4 +1,10 @@
-"""Trend Detective: interface, processing validation and trend analysis only.
+"""Trend Detective: merged original interface and real-data analysis app.
+
+Merged from the original climate finding checker and the compact real-data app.
+Retains example questions, month controls, coverage, raw/anomaly charts, method
+and date challenges, optional real-neighbour checks, session state and exports.
+Synthetic generators, invented results and the invalid detection-time formula
+are intentionally absent. Your friend's retrieval modules remain separate.
 
 Save this file as app.py beside your friend's ORIGINAL data_access.py and
 processing.py. This file contains NO HTTP client, file extractor, mock generator
@@ -25,6 +31,7 @@ returns the SAME Series contract. No source-specific retrieval belongs here.
 """
 from __future__ import annotations
 from dataclasses import asdict, dataclass, field
+from datetime import date
 import importlib
 import json
 import numpy as np
@@ -37,6 +44,7 @@ VARIABLES = {VARIABLE_ID: {
     "label": "MERRA-2 air temperature at 2 m", "source_unit": "K", "unit": "°C",
     "product": "M2IMNXASM.5.12.4", "version": "5.12.4", "field": "T2M",
     "doi": "10.5067/5ESKGQTZG7FO", "first_year": 1981, "last_year": 2025,
+    "theme": "temperature", "lat_resolution": 0.5, "lon_resolution": 0.625,
     "description": "Monthly air temperature from NASA atmospheric reanalysis; a sampled grid cell, not a city average.",
 }}
 PLACES = {"Milan": (45.46, 9.19), "Po Valley point": (45.00, 10.00), "Bergamo": (45.70, 9.68)}
@@ -257,6 +265,46 @@ def load_source_series(var_id: str, lat: float, lon: float,
 
 
 
+def build_challenges(plan: Plan, baseline: TrendResult | None,
+                     baseline_full_series: pd.Series,
+                     baseline_climatology: pd.Series) -> list[dict]:
+    """One shared version of the original date/method/coverage challenge panel."""
+    result, full, reference = baseline, baseline_full_series, baseline_climatology
+    selected = series_for_window(full, plan.start, plan.end)
+    challenges = []
+    config = VARIABLES[plan.variable]
+    windows = {(max(config["first_year"], year), pd.Timestamp(plan.end).year)
+               for year in (1981, 1990, 2000, 2010)}
+    for year, end_year in sorted(windows):
+        if year > end_year:
+            continue
+        start = f"{year}-01-01"
+        variant = Plan(plan.place, plan.lat, plan.lon, plan.variable, start, plan.end)
+        window = series_for_window(full, variant.start, variant.end)
+        try:
+            alternative = analyze_trend(variant, window, reference)
+            item = {"check": "date", "label": f"{start[:7]} to {plan.end[:7]}",
+                    "status": "ok", "plan": asdict(variant), "analysis": asdict(alternative)}
+        except ValueError as error:
+            item = {"check": "date", "label": f"{start[:7]} to {plan.end[:7]}",
+                    "status": "unavailable", "plan": asdict(variant), "reason": str(error)}
+        challenges.append(item)
+    details = coverage(selected)
+    for name, threshold in (("80% overall / 70% per calendar month", (.8, .7)),
+                            ("90% overall / 75% per calendar month", (.9, .75))):
+        challenges.append({"check": "coverage", "label": name, "status": "evaluated",
+                           "passes": details["full_years"] >= 10 and details["frac_present"] >= threshold[0]
+                           and details["min_month_frac"] >= threshold[1],
+                           "note": "Coverage screening only; no trend is refitted. Inference separately requires no monthly gaps."})
+    if result is not None:
+        challenges.append({"check": "method", "label": "OLS with HAC uncertainty (primary)",
+                           "status": "ok", "analysis": asdict(result)})
+        challenges.append({"check": "method", "label": "Seasonal Sen’s slope",
+                           "status": "descriptive", "slope_per_decade": result.sen_per_decade,
+                           "note": "Within-calendar-month median slope; no significance verdict or interval is inferred."})
+    return challenges
+
+
 def run_investigation(plan: Plan) -> dict:
     config = VARIABLES.get(plan.variable)
     if config is None:
@@ -282,30 +330,8 @@ def run_investigation(plan: Plan) -> dict:
     except ValueError as error:
         # The original data can still be inspected and exported.
         analysis_error = str(error)
-    challenges = []
-    windows = {(max(config["first_year"], year), pd.Timestamp(plan.end).year)
-               for year in (1981, 1990, 2000, 2010)}
-    for year, end_year in sorted(windows):
-        if year > end_year:
-            continue
-        start = f"{year}-01-01"
-        variant = Plan(plan.place, plan.lat, plan.lon, plan.variable, start, plan.end)
-        window = series_for_window(full, variant.start, variant.end)
-        try:
-            alternative = analyze_trend(variant, window, reference)
-            item = {"check": "date", "label": f"{start[:7]} to {plan.end[:7]}",
-                    "status": "ok", "plan": asdict(variant), "analysis": asdict(alternative)}
-        except ValueError as error:
-            item = {"check": "date", "label": f"{start[:7]} to {plan.end[:7]}",
-                    "status": "unavailable", "plan": asdict(variant), "reason": str(error)}
-        challenges.append(item)
+    challenges = build_challenges(plan, result, full, reference)
     details = coverage(selected)
-    for name, threshold in (("80% overall / 70% per calendar month", (.8, .7)),
-                            ("90% overall / 75% per calendar month", (.9, .75))):
-        challenges.append({"check": "coverage", "label": name, "status": "evaluated",
-                           "passes": details["full_years"] >= 10 and details["frac_present"] >= threshold[0]
-                           and details["min_month_frac"] >= threshold[1],
-                           "note": "Coverage screening only; no trend is refitted. Inference separately requires no monthly gaps."})
     observations = pd.DataFrame({"date": selected.index.strftime("%Y-%m-%d"),
                                  "value": selected.to_numpy(), "anomaly": anomalies.to_numpy(),
                                  "units": config["unit"], "source_units": config["source_unit"], "variable": plan.variable,
@@ -323,6 +349,64 @@ def run_investigation(plan: Plan) -> dict:
     return {"plan": plan, "series": selected, "anomalies": anomalies,
             "result": result, "analysis_error": analysis_error,
             "observations": observations, "evidence": evidence}
+
+def run_neighbor_checks(bundle: dict) -> list[dict]:
+    """Ask the existing source adapter for real neighbouring cells, on demand.
+
+    This is orchestration only. No network or file extraction is implemented
+    here; each request goes through the same five-argument source adapter.
+    """
+    plan = bundle["plan"]
+    source = bundle["evidence"]["provenance"]
+    config = VARIABLES[plan.variable]
+    lat, lon = source.get("cell_lat"), source.get("cell_lon")
+    dy = source.get("lat_resolution", config.get("lat_resolution"))
+    dx = source.get("lon_resolution", config.get("lon_resolution"))
+    if any(value is None or not np.isfinite(value) for value in (lat, lon, dy, dx)) or dy <= 0 or dx <= 0:
+        return [{"check": "region", "label": "Neighbour checks", "status": "unavailable",
+                 "reason": "The source must provide a verified cell center and grid spacing."}]
+    seen = {(round(float(lat), 5), round(float(lon), 5))}
+    rows = []
+    for dlat, dlon, direction in ((dy, 0., "north"), (-dy, 0., "south"),
+                                  (0., dx, "east"), (0., -dx, "west")):
+        target_lat, target_lon = float(lat + dlat), float((lon + dlon + 180) % 360 - 180)
+        row = {"check": "region", "label": f"{direction} neighbour", "status": "unavailable"}
+        if not -90 <= target_lat <= 90:
+            row["reason"] = "Outside the valid latitude range."
+            rows.append(row)
+            continue
+        variant = Plan(f"{plan.place}: {direction}", target_lat, target_lon,
+                       plan.variable, plan.start, plan.end)
+        row["plan"] = asdict(variant)
+        try:
+            candidate = run_investigation(variant)
+            actual = candidate["evidence"]["provenance"]
+            cell_lat, cell_lon = actual.get("cell_lat"), actual.get("cell_lon")
+            if any(value is None or not np.isfinite(value) for value in (cell_lat, cell_lon)):
+                raise ValueError("The adapter did not identify the returned cell.")
+            cell = (round(float(cell_lat), 5), round(float(cell_lon), 5))
+            if cell in seen:
+                raise ValueError("The returned cell duplicates a cell already checked.")
+            seen.add(cell)
+            if candidate["result"] is None:
+                raise ValueError(candidate["analysis_error"])
+            row.update(status="ok", analysis=asdict(candidate["result"]), provenance=actual,
+                       note="Separate real cell; uses its own fixed-period climatology. This is not a formal test of differences between trends.")
+        except (ValueError, RuntimeError, OSError, ImportError) as error:
+            row["reason"] = str(error)
+        rows.append(row)
+    return rows
+
+
+def set_example(place: str, variable: str = VARIABLE_ID, start_year: int = 1981) -> None:
+    """Example callbacks populate controls; they do not silently run retrieval."""
+    meta = VARIABLES[variable]
+    st.session_state["place_choice"] = place
+    st.session_state["theme_choice"] = meta.get("theme", "other")
+    st.session_state["variable_choice"] = variable
+    st.session_state["start_choice"] = date(max(meta["first_year"], start_year), 1, 1)
+    st.session_state["end_choice"] = date(meta["last_year"], 12, 1)
+
 
 def render_chart(frame: pd.DataFrame, y_title: str) -> None:
     # Separate contiguous segments so missing months never become connecting lines.
@@ -372,6 +456,7 @@ def render_results(bundle: dict) -> None:
         st.warning(f"Trend unavailable: {bundle['analysis_error']}")
         st.caption("Available values remain visible; no missing observations are filled.")
     else:
+        st.subheader("Baseline result")
         metrics = st.columns(4)
         metrics[0].metric("Change per decade", f"{result.slope_per_decade:.3f} {unit}")
         metrics[1].metric(f"95% interval ({unit}/decade)", f"{result.ci[0]:.3f} to {result.ci[1]:.3f}")
@@ -386,12 +471,16 @@ def render_results(bundle: dict) -> None:
         for note in result.warnings:
             st.caption(note)
     st.subheader("Challenge my finding")
+    st.caption("Neighbour checks may request four additional source records and need your friend's source credentials.")
+    if st.button("Check real neighbouring cells", key="run_neighbours"):
+        with st.spinner("Comparing real source cells…"):
+            evidence["region_challenges"] = run_neighbor_checks(bundle)
     st.caption("Date checks reuse the same data and reference. Coverage checks screen the selected record without refitting it.")
     rows = []
-    for item in evidence["challenges"]:
+    for item in evidence["challenges"] + evidence.get("region_challenges", []):
         analysis = item.get("analysis")
         rows.append({"Check": item["check"], "Window / rule": item["label"], "Status": item["status"],
-                     f"{unit}/decade": analysis["slope_per_decade"] if analysis else None,
+                     f"{unit}/decade": analysis["slope_per_decade"] if analysis else item.get("slope_per_decade"),
                      "95% lower": analysis["ci"][0] if analysis else None,
                      "95% upper": analysis["ci"][1] if analysis else None,
                      "p-value": analysis["p"] if analysis else None,
@@ -407,24 +496,51 @@ def render_results(bundle: dict) -> None:
                        "trend_evidence.json", "application/json", key="evidence_download")
 
 def main() -> None:
-    st.set_page_config(page_title="Trend Detective", page_icon="🌍", layout="wide")
-    st.title("Trend Detective")
-    st.caption("Historical trend analysis using the data supplied by your source modules.")
-    variable = st.selectbox("Variable", list(VARIABLES),
-                            format_func=lambda key: VARIABLES[key]["label"])
+    st.set_page_config(page_title="Climate finding checker", page_icon="🌦️", layout="wide")
+    st.title("Climate finding checker")
+    st.caption("Explore historical trends and challenge analytical choices using real source data.")
+    st.markdown("**Example investigations**")
+    example_columns = st.columns(3)
+    for column, (label, example_place) in zip(example_columns, (
+            ("Milan warming", "Milan"), ("Po Valley temperature", "Po Valley point"),
+            ("Bergamo temperature", "Bergamo"))):
+        with column:
+            st.button(label, on_click=set_example, args=(example_place,), use_container_width=True)
+    st.caption("Rainfall and soil-moisture investigations become available when verified adapters and variable entries are registered.")
+    st.session_state.setdefault("place_choice", "Milan")
+    st.session_state.setdefault("theme_choice", VARIABLES[VARIABLE_ID].get("theme", "temperature"))
+    st.session_state.setdefault("variable_choice", VARIABLE_ID)
+    # Dependent selectors rerun immediately, outside the submit form.
+    themes = sorted({entry.get("theme", "other") for entry in VARIABLES.values()})
+    if st.session_state["theme_choice"] not in themes:
+        st.session_state["theme_choice"] = themes[0]
+    theme = st.selectbox("Theme", themes, key="theme_choice")
+    allowed_variables = [key for key, meta in VARIABLES.items() if meta.get("theme", "other") == theme]
+    if st.session_state["variable_choice"] not in allowed_variables:
+        st.session_state["variable_choice"] = allowed_variables[0]
+    variable = st.selectbox("Variable", allowed_variables,
+                            format_func=lambda key: VARIABLES[key]["label"], key="variable_choice")
     config = VARIABLES[variable]
     st.write(config["description"])
-    place = st.selectbox("Location", list(PLACES))
-    with st.form(f"investigation_{variable}"):
-        years = st.slider("Analysis years", config["first_year"], config["last_year"],
-                           (config["first_year"], config["last_year"]))
-        st.caption("Retrieval, credentials and cache reuse are handled by your friend's source module.")
-        submitted = st.form_submit_button("Run investigation", type="primary")
+    place = st.selectbox("Location", list(PLACES), key="place_choice")
+    minimum, maximum = date(config["first_year"], 1, 1), date(config["last_year"], 12, 1)
+    for key, default in (("start_choice", minimum), ("end_choice", maximum)):
+        st.session_state[key] = min(maximum, max(minimum, st.session_state.get(key, default)))
+    with st.form("question_flow"):
+        left, right = st.columns(2)
+        with left:
+            start = st.date_input("Start month", min_value=minimum, max_value=maximum, key="start_choice")
+        with right:
+            end = st.date_input("End month", min_value=minimum, max_value=maximum, key="end_choice")
+        st.caption("Dates are interpreted as whole months. Retrieval and caching stay in your friend's source module.")
+        submitted = st.form_submit_button("Check the finding", type="primary")
     if submitted:
         lat, lon = PLACES[place]
-        plan = Plan(place, lat, lon, variable, f"{years[0]}-01-01", f"{years[1]}-12-01")
+        plan = Plan(place, lat, lon, variable,
+                    pd.Timestamp(start).to_period("M").start_time.date().isoformat(),
+                    pd.Timestamp(end).to_period("M").start_time.date().isoformat())
         try:
-            with st.spinner("Waiting for source data and analysing the selected record…"):
+            with st.spinner("Loading source data and analysing the record…"):
                 candidate = run_investigation(plan)
         except (RuntimeError, ValueError, OSError, ImportError) as error:
             st.error(str(error))
@@ -435,13 +551,12 @@ def main() -> None:
     if "applied" in st.session_state:
         bundle = st.session_state["applied"]
         plan = bundle["plan"]
-        if (place, variable, years[0], years[1]) != (plan.place, plan.variable, int(plan.start[:4]), int(plan.end[:4])):
+        if (place, variable, str(start)[:7], str(end)[:7]) != (plan.place, plan.variable, plan.start[:7], plan.end[:7]):
             st.info("The controls have changed. Submit to update the applied investigation shown below.")
         render_results(bundle)
     else:
-        st.info("Keep data_access.py and processing.py beside this app. Then run an investigation to use their returned monthly data.")
+        st.info("Keep your friend's data_access.py and processing.py beside app.py, then check an investigation.")
 
 
 if __name__ == "__main__":
     main()
-
