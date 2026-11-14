@@ -57,7 +57,7 @@ Water-storage mode, GRACE, SWOT. AI advisor, correlations, CSV upload. A browser
 
 - [x] **A1 `[OPS]` Commit `ROADMAP.md` and `CLAUDE.md`** in their own commit and push.
 - [x] **A2 `[OPS]` Pin Streamlit** in `requirements.txt` to the local version (1.67.0).
-- [ ] **A3 `[E]` App smoke test,** `tests/test_app_smoke.py` with `streamlit.testing.v1.AppTest`: load the app, click each example, press "Check the finding", assert no exception.
+- [x] **A3 `[E]` App smoke test,** `tests/test_app_smoke.py` with `streamlit.testing.v1.AppTest`: load the app, click each example, press "Check the finding", assert no exception.
 - [ ] **A4 `[OPS]` Deploy `main`** to Streamlit Community Cloud, Python 3.11, `EDL_TOKEN` as a secret. Open the link in a private window.
 - [ ] **A5 `[U]` `[A]` Fix example 3:** Po Valley rain, 2013-01 to 2022-12, label "Was the Po Valley drying? (the view from 2022)". `EXAMPLES` gains an end year. Check: -39.3 mm/month per decade, p = 0.024.
 - [ ] **A6 `[OPS]` `[A]` Move `adapp.py`** to branch `p2-advisor`. Team agreement first.
