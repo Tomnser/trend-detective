@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+import json
 from datetime import date
 
 import numpy as np
@@ -35,7 +36,6 @@ class TrendResult:
     n_eff: float
     r1: float
     coverage: float
-    years_needed: float
     sen_per_decade: float
     hac_p: float
     settings: dict = field(default_factory=dict)
@@ -46,7 +46,7 @@ class TrendResult:
 class ChallengeRow:
     category: str
     label: str
-    result: TrendResult
+    result: TrendResult | None
     note: str
     display_method: str = "OLS"
     coverage_passes: bool | None = None
@@ -58,7 +58,7 @@ class ChallengeRow:
 
 VARIABLES = {
     "MERRA2_T2M": {
-        "label": "MERRA-2 temperature at 2 m",
+        "label": "Synthetic temperature at 2 m",
         "theme": "temperature",
         "unit": "°C",
         "first_year": 1981,
@@ -69,7 +69,7 @@ VARIABLES = {
         "noise_amplitude": 0.20,
     },
     "GPM_PRECIP": {
-        "label": "GPM precipitation",
+        "label": "Synthetic precipitation",
         "theme": "precipitation",
         "unit": "mm/month",
         "first_year": 2001,
@@ -80,7 +80,7 @@ VARIABLES = {
         "noise_amplitude": 3.5,
     },
     "GLDAS_SSM": {
-        "label": "GLDAS soil moisture",
+        "label": "Synthetic soil moisture",
         "theme": "soil moisture",
         "unit": "kg/m²",
         "first_year": 2001,
@@ -167,6 +167,8 @@ def series_for_window(
     end: str,
 ) -> pd.Series:
     """Keep absent months as NaN rather than silently dropping them."""
+    if pd.Timestamp(start) > pd.Timestamp(end):
+        raise ValueError("Start must precede end.")
     start_month = pd.Timestamp(start).to_period("M").to_timestamp()
     end_month = pd.Timestamp(end).to_period("M").to_timestamp()
     months = pd.date_range(start_month, end_month, freq="MS")
@@ -213,7 +215,7 @@ def coverage_details(series: pd.Series) -> dict:
     full_years = 0
     for year in range(first_month.year, last_month.year + 1):
         year_months = pd.date_range(f"{year}-01-01", f"{year}-12-01", freq="MS")
-        if year_months[0] >= first_month and year_months[-1] <= last_month:
+        if series.reindex(year_months).notna().all():
             full_years += 1
 
     month_coverage = {}
@@ -269,142 +271,61 @@ def seasonal_sen_slope(anomalies: pd.Series) -> float:
                         (values[j] - values[i]) / (years[j] - years[i])
                     )
 
-    return float(np.median(slopes) * 10.0) if slopes else 0.0
+    return float(np.median(slopes) * 10.0) if slopes else float("nan")
 
 
-def hac_p_value(
-    time_years: np.ndarray,
-    values: np.ndarray,
-    coefficients: np.ndarray,
-    residuals: np.ndarray,
-    max_lag: int = 12,
-) -> float:
-    """Newey–West p-value using Bartlett weights and a 12-month lag."""
-    n = len(values)
-    design = np.column_stack((np.ones(n), time_years))
-    lag = min(max_lag, max(n - 1, 0))
+def analyze_trend(plan: Plan, series: pd.Series,
+                  fixed_climatology: pd.Series) -> TrendResult:
+    """Exploratory OLS with one consistent Bartlett HAC uncertainty estimate.
+
+    Require a complete monthly sequence: observation lags then equal month lags.
+    This demonstration method still requires scientific validation for real data.
+    """
+    expected = series_for_window(series, plan.start, plan.end)
+    if expected.empty or not np.isfinite(expected.to_numpy(dtype=float)).all():
+        raise ValueError("Trend inference requires a complete, finite monthly series. Missing months are not filled.")
+    if not coverage_passes(coverage_details(expected)):
+        raise ValueError("Trend inference requires at least ten complete years and adequate coverage.")
+    anomalies = monthly_anomalies(expected, fixed_climatology)
+    if not np.isfinite(anomalies.to_numpy()).all():
+        raise ValueError("The fixed reference is missing calendar-month means.")
+    t = np.arange(len(anomalies), dtype=float) / 12.0
+    design = np.column_stack((np.ones(len(t)), t))
+    coefficients = np.linalg.lstsq(design, anomalies.to_numpy(), rcond=None)[0]
+    residuals = anomalies.to_numpy() - design @ coefficients
+    n = len(t)
+    lag = min(12, n - 1)
     scores = design * residuals[:, None]
     meat = scores.T @ scores
-
     for offset in range(1, lag + 1):
-        weight = 1.0 - offset / (lag + 1.0)
         gamma = scores[offset:].T @ scores[:-offset]
-        meat += weight * (gamma + gamma.T)
-
+        meat += (1.0 - offset / (lag + 1)) * (gamma + gamma.T)
     bread = np.linalg.pinv(design.T @ design)
-    covariance = bread @ meat @ bread
-    standard_error = float(np.sqrt(max(covariance[1, 1], 0.0)))
-
-    if not np.isfinite(standard_error) or standard_error == 0:
-        return 1.0
-
-    z_score = abs(float(coefficients[1]) / standard_error)
-    return float(2.0 * stats.norm.sf(z_score))
-
-
-def analyze_trend(
-    plan: Plan,
-    series: pd.Series,
-    fixed_climatology: pd.Series,
-) -> TrendResult:
-    anomalies = monthly_anomalies(series, fixed_climatology).dropna().sort_index()
-
-    if len(anomalies) < 3:
-        raise ValueError("At least three observed monthly values are needed.")
-
-    decimal_year = (
-        anomalies.index.year.to_numpy(dtype=float)
-        + (anomalies.index.month.to_numpy(dtype=float) - 1.0) / 12.0
-    )
-    elapsed_years = decimal_year - decimal_year.min()
-    values = anomalies.to_numpy(dtype=float)
-
-    design = np.column_stack((np.ones(len(values)), elapsed_years))
-    coefficients, _, _, _ = np.linalg.lstsq(design, values, rcond=None)
-    fitted = design @ coefficients
-    residuals = values - fitted
-
-    n = len(values)
-    if n > 2:
-        r1 = float(np.corrcoef(residuals[:-1], residuals[1:])[0, 1])
-    else:
-        r1 = 0.0
-    if not np.isfinite(r1):
-        r1 = 0.0
-    r1 = float(np.clip(r1, -0.99, 0.99))
-
-    # Rough AR(1) effective-sample-size adjustment. This is not a full
-    # autocorrelation model and should not be read as one.
-    n_eff = float(n * (1.0 - r1) / (1.0 + r1))
-    n_eff = float(np.clip(n_eff, 1.0, float(n)))
-
-    sxx = float(np.sum((elapsed_years - elapsed_years.mean()) ** 2))
-    degrees_freedom = max(n - 2, 1)
-    residual_variance = float(np.sum(residuals**2) / degrees_freedom)
-    slope_se = float(np.sqrt(residual_variance / sxx)) if sxx else 0.0
-
-    uncertainty_inflation = float(np.sqrt(max(n / n_eff, 1.0)))
-    adjusted_slope_se = slope_se * uncertainty_inflation
-    adjusted_df = max(n_eff - 2.0, 1.0)
-
-    slope_per_decade = float(coefficients[1] * 10.0)
-    if adjusted_slope_se > 0:
-        test_statistic = abs(float(coefficients[1]) / adjusted_slope_se)
-        p_value = float(2.0 * stats.t.sf(test_statistic, df=adjusted_df))
-        critical_value = float(stats.t.ppf(0.975, df=adjusted_df))
-    else:
-        p_value = 1.0
-        critical_value = float(stats.t.ppf(0.975, df=adjusted_df))
-
-    confidence_interval = (
-        float((coefficients[1] - critical_value * adjusted_slope_se) * 10.0),
-        float((coefficients[1] + critical_value * adjusted_slope_se) * 10.0),
-    )
-
-    if p_value < 0.05 and slope_per_decade > 0:
-        verdict = "significant increase"
-    elif p_value < 0.05 and slope_per_decade < 0:
-        verdict = "significant decrease"
-    else:
-        verdict = "not enough evidence"
-
-    coverage = coverage_details(series)
-    hac = hac_p_value(elapsed_years, values, coefficients, residuals)
-
-    # Keep this visibly approximate; it is not a formal power calculation.
-    rough_years_needed = (
-        float(max(10.0, 1.96**2 / abs(slope_per_decade)))
-        if abs(slope_per_decade) > 1e-12
-        else float("inf")
-    )
-
+    covariance = bread @ meat @ bread * n / (n - 2)
+    se = float(np.sqrt(max(covariance[1, 1], 0.0)))
+    slope = float(coefficients[1])
+    if se <= 1e-14:
+        raise ValueError("Residual variation is too small for meaningful uncertainty estimation.")
+    p = float(2 * stats.norm.sf(abs(slope / se)))
+    critical = float(stats.norm.ppf(0.975))
+    ci = ((slope - critical * se) * 10, (slope + critical * se) * 10)
+    verdict = ("significant increase" if slope > 0 else "significant decrease") if p < .05 else "not enough evidence"
+    r1 = float(np.corrcoef(residuals[:-1], residuals[1:])[0, 1])
     return TrendResult(
-        slope_per_decade=slope_per_decade,
-        ci=confidence_interval,
-        p=p_value,
-        verdict=verdict,
-        n=n,
-        n_eff=n_eff,
-        r1=r1,
-        coverage=coverage["months_present"],
-        years_needed=rough_years_needed,
-        sen_per_decade=seasonal_sen_slope(anomalies),
-        hac_p=hac,
-        settings={
-            "variable": plan.variable,
-            "method": "OLS on monthly anomalies",
-            "climatology": "fixed full-record calendar-month mean",
-            "start": plan.start,
-            "end": plan.end,
-            "hac_lag_months": 12,
-        },
-        warnings=[
-            "The AR(1) effective-sample-size adjustment is rough, not a full solution to autocorrelation.",
-            "The years-needed figure is a rough estimate; it assumes the current rate and AR(1) noise.",
-            "The HAC/Newey–West cross-check uses a fixed 12-month Bartlett lag.",
-            "All current values are synthetic demo data, not NASA observations.",
-        ],
-    )
+        slope_per_decade=slope * 10, ci=ci, p=p, verdict=verdict,
+        n=n, n_eff=float(n), r1=r1, coverage=1.0,
+        sen_per_decade=seasonal_sen_slope(anomalies), hac_p=p,
+        settings={"method": "OLS on fixed-reference monthly anomalies; Bartlett HAC",
+                  "hac_lag_months": lag, "small_sample_factor": "n/(n-2)",
+                  "reference": "full synthetic record calendar-month means",
+                  "reference_start": str(VARIABLES[plan.variable]["first_year"]),
+                  "reference_end": str(LAST_YEAR),
+                  "missing_data_policy": "reject gaps for inference; no filling",
+                  "interval": "95% asymptotic normal", "alpha": .05,
+                  "variable": plan.variable, "start": plan.start, "end": plan.end},
+        warnings=["Exploratory demonstration: fixed 12-month HAC settings need validation before real-data use.",
+                  "Sensitivity checks do not correct for selecting an interesting result.",
+                  "All values are synthetic; conclusions do not describe real locations."])
 
 
 # ---------------------------------------------------------------------------
@@ -421,8 +342,7 @@ def build_challenges(
     variable_start = VARIABLES[plan.variable]["first_year"]
 
     # Fixed date-window set. All use the same baseline full-record climatology.
-    for year in (1981, 1990, 2000, 2010):
-        year = max(year, variable_start)
+    for year in sorted({max(year, variable_start) for year in (1981, 1990, 2000, 2010)}):
         start = f"{year}-01-01"
         if pd.Timestamp(start) >= pd.Timestamp(plan.end):
             continue
@@ -449,7 +369,7 @@ def build_challenges(
                 "full-record monthly climatology as the baseline."
             )
         except ValueError:
-            result = baseline
+            result = None
             note = "Not enough data in this date window to calculate a trend."
 
         rows.append(
@@ -464,10 +384,10 @@ def build_challenges(
 
     # Target cell and four predefined neighbours.
     for dlat, dlon, direction in (
-        (-0.25, 0.00, "north neighbour"),
-        (0.25, 0.00, "south neighbour"),
-        (0.00, 0.25, "east neighbour"),
-        (0.00, -0.25, "west neighbour"),
+        (0.25, 0.00, "north demo offset"),
+        (-0.25, 0.00, "south demo offset"),
+        (0.00, 0.25, "east demo offset"),
+        (0.00, -0.25, "west demo offset"),
     ):
         lat, lon = plan.lat + dlat, plan.lon + dlon
         full = synthetic_full_series(plan.variable, plan.place, lat, lon)
@@ -489,7 +409,7 @@ def build_challenges(
                 "These are not real NASA grid-cell values."
             )
         except ValueError:
-            result = baseline
+            result = None
             note = "Not enough data in this cell to calculate a trend."
 
         rows.append(
@@ -507,15 +427,8 @@ def build_challenges(
                 "method",
                 "Method: OLS (baseline)",
                 baseline,
-                "Primary method. Its uncertainty uses the stated rough AR(1) adjustment.",
+                "Primary exploratory method: OLS with 12-month Bartlett HAC uncertainty.",
                 display_method="OLS",
-            ),
-            ChallengeRow(
-                "method",
-                "Method: HAC/Newey–West",
-                baseline,
-                "Keeps the OLS slope and compares the p-value using a fixed 12-month HAC lag.",
-                display_method="HAC",
             ),
             ChallengeRow(
                 "method",
@@ -564,364 +477,103 @@ def build_challenges(
     return rows
 
 
-# ---------------------------------------------------------------------------
-# Streamlit interface
-# ---------------------------------------------------------------------------
+def main() -> None:
+    st.set_page_config(page_title="Trend Detective", page_icon="🌦️", layout="wide")
+    st.title("Trend Detective")
+    st.warning("Synthetic demonstration only. No NASA observations or data retrieval are connected.")
+    st.caption("Explore monthly patterns and how analytical choices affect a finding.")
 
-st.set_page_config(
-    page_title="Climate finding checker",
-    page_icon="🌦️",
-    layout="wide",
-)
+    # Dependent controls rerun immediately; applied results have their own state.
+    place = st.selectbox("Location", list(PLACES))
+    variable = st.selectbox("Variable", list(VARIABLES),
+                            format_func=lambda key: VARIABLES[key]["label"])
+    earliest = date(VARIABLES[variable]["first_year"], 1, 1)
+    latest = date(LAST_YEAR, 12, 1)
+    for key, default in (("start", earliest), ("end", latest)):
+        st.session_state[key] = min(latest, max(earliest, st.session_state.get(key, default)))
+    with st.form("investigation"):
+        left, right = st.columns(2)
+        start = left.date_input("Start month", min_value=earliest, max_value=latest, key="start")
+        end = right.date_input("End month", min_value=earliest, max_value=latest, key="end")
+        st.caption("Dates are interpreted as whole months. At least ten complete years are required.")
+        submitted = st.form_submit_button("Check the finding", type="primary")
+    if submitted:
+        lat, lon = PLACES[place]
+        candidate = Plan(place, lat, lon, variable,
+                         pd.Timestamp(start).to_period("M").start_time.date().isoformat(),
+                         pd.Timestamp(end).to_period("M").start_time.date().isoformat())
+        try:
+            full = synthetic_full_series(variable, place, lat, lon)
+            window = series_for_window(full, candidate.start, candidate.end)
+            reference = monthly_climatology(full)
+            result = analyze_trend(candidate, window, reference)
+            challenges = build_challenges(candidate, result, full, reference)
+        except ValueError as error:
+            st.error(str(error))
+        else:
+            st.session_state["applied"] = (candidate, window, reference, result, challenges)
 
-st.title("Climate finding checker")
-st.caption(
-    "Explore whether a climate finding is sensitive to reasonable analytical "
-    "choices. A result is not a claim that one analysis establishes the truth."
-)
-st.warning(
-    "Demo mode: this single-file version uses deterministic synthetic data, "
-    "not NASA observations. Do not interpret its results as evidence about "
-    "Milan or the Po Valley."
-)
-
-
-def set_example(place: str, theme: str, variable: str, start_year: int) -> None:
-    st.session_state["place_choice"] = place
-    st.session_state["theme_choice"] = theme
-    st.session_state["variable_choice"] = variable
-    st.session_state["start_choice"] = date(start_year, 1, 1)
-    st.session_state["end_choice"] = date(2025, 12, 1)
-
-
-def example_callback(place: str, theme: str, variable: str, start_year: int):
-    def callback():
-        set_example(place, theme, variable, start_year)
-    return callback
-
-
-st.markdown("**Example questions**")
-chip_columns = st.columns(4)
-with chip_columns[0]:
-    st.button(
-        "Milan warming",
-        on_click=example_callback("Milan", "temperature", "MERRA2_T2M", 1981),
-        use_container_width=True,
-    )
-with chip_columns[1]:
-    st.button(
-        "Po Valley getting drier?",
-        on_click=example_callback("Po Valley", "precipitation", "GPM_PRECIP", 2001),
-        use_container_width=True,
-    )
-with chip_columns[2]:
-    st.button(
-        "Soil moisture decline",
-        on_click=example_callback("Po Valley", "soil moisture", "GLDAS_SSM", 2001),
-        use_container_width=True,
-    )
-with chip_columns[3]:
-    st.button(
-        "Was 2022 a one-off?",
-        on_click=example_callback("Po Valley", "precipitation", "GPM_PRECIP", 2001),
-        use_container_width=True,
-    )
-
-st.caption("Choose a question structure below; there is no free-text or AI question parser.")
-
-# Defaults for Streamlit widgets.
-st.session_state.setdefault("place_choice", "Milan")
-st.session_state.setdefault("theme_choice", "temperature")
-st.session_state.setdefault("variable_choice", "MERRA2_T2M")
-st.session_state.setdefault("start_choice", date(1981, 1, 1))
-st.session_state.setdefault("end_choice", date(2025, 12, 1))
-
-with st.form("question_flow"):
-    left, right = st.columns(2)
-
-    with left:
-        place = st.selectbox(
-            "Where?",
-            list(PLACES),
-            key="place_choice",
-        )
-        theme = st.selectbox(
-            "Theme?",
-            ["temperature", "precipitation", "soil moisture"],
-            key="theme_choice",
-        )
-        allowed_variables = [
-            key for key, meta in VARIABLES.items() if meta["theme"] == theme
-        ]
-        if st.session_state.get("variable_choice") not in allowed_variables:
-            st.session_state["variable_choice"] = allowed_variables[0]
-        variable = st.selectbox(
-            "Variable",
-            allowed_variables,
-            format_func=lambda key: VARIABLES[key]["label"],
-            key="variable_choice",
-        )
-
-    with right:
-        min_year = VARIABLES[variable]["first_year"]
-        start_value = st.session_state["start_choice"]
-        end_value = st.session_state["end_choice"]
-
-        # Keep date widgets in range when the chosen variable starts later.
-        if start_value.year < min_year:
-            start_value = date(min_year, 1, 1)
-            st.session_state["start_choice"] = start_value
-
-        start = st.date_input(
-            "Start date",
-            value=start_value,
-            min_value=date(min_year, 1, 1),
-            max_value=date(LAST_YEAR, 12, 1),
-            key="start_choice",
-        )
-        end = st.date_input(
-            "End date",
-            value=end_value,
-            min_value=date(min_year, 1, 1),
-            max_value=date(LAST_YEAR, 12, 1),
-            key="end_choice",
-        )
-
-    st.caption(
-        "Supported investigation: monthly trend for one selected variable and location."
-    )
-    submitted = st.form_submit_button("Check the finding", type="primary")
-
-
-if submitted:
-    lat, lon = PLACES[place]
-    plan = Plan(
-        place=place,
-        lat=lat,
-        lon=lon,
-        variable=variable,
-        start=start.isoformat(),
-        end=end.isoformat(),
-    )
-
-    if pd.Timestamp(plan.start) > pd.Timestamp(plan.end):
-        st.error("Choose a start date before the end date.")
-        st.stop()
-
-    full_series = synthetic_full_series(variable, place, lat, lon)
-    selected_series = series_for_window(full_series, plan.start, plan.end)
-
-    # Check coverage on the requested time window.
-    details = coverage_details(selected_series)
-    if not coverage_passes(details):
-        st.error(
-            "Coverage check failed. The selected window needs at least 10 "
-            "full calendar years, 80% of months present, and 70% coverage "
-            "for every calendar month."
-        )
-        st.info(
-            f"Current window: {details['full_years']} full calendar years; "
-            f"{details['months_present']:.1%} of months present."
-        )
-        st.stop()
-
-    # Compute one fixed climatology from the full available record, then reuse it.
-    fixed_climatology = monthly_climatology(full_series)
-
-    try:
-        result = analyze_trend(plan, selected_series, fixed_climatology)
-    except ValueError as error:
-        st.error(str(error))
-        st.stop()
-
-    meta = VARIABLES[variable]
-    st.caption(
-        f"Demo series: {meta['label']} · Coordinates: {lat:.4f}, {lon:.4f} · "
-        f"Available years: {meta['first_year']}–{LAST_YEAR} · "
-        "Dataset: deterministic synthetic demo (not NASA data)."
-    )
-
-    st.subheader("Baseline result")
-    metrics = st.columns(5)
-    metrics[0].metric(
-        "Slope / decade",
-        f"{result.slope_per_decade:.3f} {meta['unit']}/decade",
-    )
-    metrics[1].metric(
-        "95% interval",
-        f"{result.ci[0]:.3f} to {result.ci[1]:.3f}",
-    )
-    metrics[2].metric("Primary p-value", f"{result.p:.3g}")
-    metrics[3].metric("Month coverage", f"{result.coverage:.1%}")
-    metrics[4].metric("Effective n (rough)", f"{result.n_eff:.0f} / {result.n}")
-
-    st.markdown(
-        f"**Verdict:** {result.verdict}. The fitted monthly-anomaly trend is "
-        f"{result.slope_per_decade:.3f} per decade "
-        f"(95% interval {result.ci[0]:.3f} to {result.ci[1]:.3f}). "
-        "This describes the selected analysis setup; it is not a claim of certainty."
-    )
-    st.caption(
-        f"HAC/Newey–West 12-month-lag p-value: {result.hac_p:.3g} · "
-        f"Seasonal Sen’s slope: {result.sen_per_decade:.3f} per decade. "
-        "Mann–Kendall is not used for the verdict."
-    )
+    if "applied" not in st.session_state:
+        st.info("Choose a variable and dates, then check the finding.")
+        return
+    plan, window, reference, result, challenges = st.session_state["applied"]
+    meta = VARIABLES[plan.variable]
+    st.subheader("Applied investigation")
+    st.write(f"{plan.place} · {meta['label']} · {plan.start[:7]} to {plan.end[:7]}")
+    if (place, variable, str(start)[:7], str(end)[:7]) != (plan.place, plan.variable, plan.start[:7], plan.end[:7]):
+        st.info("Controls have changed. The results below still describe the applied investigation; submit to update them.")
+    columns = st.columns(4)
+    columns[0].metric("Change per decade", f"{result.slope_per_decade:.3f} {meta['unit']}")
+    columns[1].metric("95% interval", f"{result.ci[0]:.3f} to {result.ci[1]:.3f}")
+    columns[2].metric("HAC p-value", f"{result.p:.3g}")
+    columns[3].metric("Monthly coverage", f"{result.coverage:.1%}")
+    st.write(f"Exploratory demo verdict: **{result.verdict}**.")
     for warning in result.warnings:
-        st.caption(f"Note: {warning}")
+        st.caption(warning)
 
-    anomalies = monthly_anomalies(
-        selected_series,
-        fixed_climatology,
-    ).dropna()
-
-    if not anomalies.empty:
-        decimal_year = (
-            anomalies.index.year.to_numpy(dtype=float)
-            + (anomalies.index.month.to_numpy(dtype=float) - 1.0) / 12.0
-        )
-        elapsed_years = decimal_year - decimal_year.min()
-        design = np.column_stack((np.ones(len(elapsed_years)), elapsed_years))
-        values = anomalies.to_numpy(dtype=float)
-        coefficients, _, _, _ = np.linalg.lstsq(design, values, rcond=None)
-        fitted = design @ coefficients
-        residuals = values - fitted
-
-        sxx = float(np.sum((elapsed_years - elapsed_years.mean()) ** 2))
-        residual_variance = float(
-            np.sum(residuals**2) / max(len(values) - 2, 1)
-        )
-        sigma = np.sqrt(max(residual_variance, 0.0))
-        n_eff = max(result.n_eff, 1.0)
-        approximate_band_scale = np.sqrt(max(len(values) / n_eff, 1.0))
-        df = max(n_eff - 2.0, 1.0)
-        t_critical = float(stats.t.ppf(0.975, df=df))
-        leverage = (
-            1.0 / len(values)
-            + (elapsed_years - elapsed_years.mean()) ** 2 / sxx
-            if sxx > 0
-            else np.zeros(len(values))
-        )
-        half_width = t_critical * sigma * approximate_band_scale * np.sqrt(leverage)
-
-        figure = make_subplots(
-            rows=2,
-            cols=1,
-            shared_xaxes=True,
-            vertical_spacing=0.10,
-            subplot_titles=("Raw monthly values (faint)", "Monthly anomalies and fitted trend"),
-        )
-        figure.add_trace(
-            go.Scatter(
-                x=selected_series.index,
-                y=selected_series.values,
-                mode="lines",
-                name="Raw monthly value",
-                line={"color": "#9aa4ad", "width": 1},
-                opacity=0.55,
-            ),
-            row=1,
-            col=1,
-        )
-        figure.add_trace(
-            go.Scatter(
-                x=anomalies.index,
-                y=fitted + half_width,
-                mode="lines",
-                line={"width": 0},
-                showlegend=False,
-                hoverinfo="skip",
-            ),
-            row=2,
-            col=1,
-        )
-        figure.add_trace(
-            go.Scatter(
-                x=anomalies.index,
-                y=fitted - half_width,
-                mode="lines",
-                name="Approx. 95% trend band",
-                fill="tonexty",
-                fillcolor="rgba(41,128,185,0.16)",
-                line={"width": 0},
-                hoverinfo="skip",
-            ),
-            row=2,
-            col=1,
-        )
-        figure.add_trace(
-            go.Scatter(
-                x=anomalies.index,
-                y=anomalies.values,
-                mode="lines",
-                name="Monthly anomaly",
-                line={"color": "#d35400", "width": 1.5},
-            ),
-            row=2,
-            col=1,
-        )
-        figure.add_trace(
-            go.Scatter(
-                x=anomalies.index,
-                y=fitted,
-                mode="lines",
-                name="OLS trend",
-                line={"color": "#1f77b4", "width": 3},
-            ),
-            row=2,
-            col=1,
-        )
-        figure.update_yaxes(title_text=meta["unit"], row=1, col=1)
-        figure.update_yaxes(title_text=f"Anomaly ({meta['unit']})", row=2, col=1)
-        figure.update_xaxes(title_text="Month", row=2, col=1)
-        figure.update_layout(
-            height=650,
-            title="Monthly series and anomalies",
-            legend_title="Series",
-        )
-        st.plotly_chart(figure, use_container_width=True)
-        st.caption(
-            "The plotted band is an approximate trend uncertainty band using "
-            "the same rough AR(1) adjustment; it is not a full autocorrelation model."
-        )
+    anomalies = monthly_anomalies(window, reference)
+    figure = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                           subplot_titles=("Synthetic monthly values", "Fixed-reference monthly anomalies"))
+    figure.add_trace(go.Scatter(x=window.index, y=window.values, name=meta["label"], connectgaps=False), row=1, col=1)
+    figure.add_trace(go.Scatter(x=anomalies.index, y=anomalies.values, name="Anomalies", connectgaps=False), row=2, col=1)
+    t = np.arange(len(anomalies)) / 12
+    fitted = anomalies.mean() + result.slope_per_decade / 10 * (t - t.mean())
+    figure.add_trace(go.Scatter(x=anomalies.index, y=fitted, name="Fitted trend"), row=2, col=1)
+    figure.update_yaxes(title_text=meta["unit"], row=1, col=1)
+    figure.update_yaxes(title_text=f"Anomaly ({meta['unit']})", row=2, col=1)
+    figure.update_layout(height=620)
+    st.plotly_chart(figure, use_container_width=True)
 
     st.subheader("Challenge my finding")
-    st.caption(
-        "These checks are a fixed set. The baseline stays visible above; "
-        "the app does not search arbitrary settings for a preferred result."
-    )
+    st.caption("Predefined exploratory checks; offsets are synthetic locations, not verified NASA grid cells. Sen’s slope is descriptive only.")
+    rows = []
+    for check in challenges:
+        value = check.result
+        sen = check.display_method == "Sen"
+        rows.append({"Check": check.label,
+                     "Status": "Unavailable" if value is None else "Calculated",
+                     f"Change ({meta['unit']}/decade)": None if value is None else value.sen_per_decade if sen else value.slope_per_decade,
+                     "95% lower": None if value is None or sen else value.ci[0],
+                     "95% upper": None if value is None or sen else value.ci[1],
+                     "p-value": None if value is None or sen else value.p,
+                     "Interpretation": "Unavailable" if value is None else "Descriptive slope only" if sen else value.verdict,
+                     "Coverage rule passes": check.coverage_passes, "Explanation": check.note})
+    st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+    observations = pd.DataFrame({"date": window.index, "value": window.values,
+                                 "anomaly": anomalies.values, "unit": meta["unit"],
+                                 "is_synthetic": True})
+    with st.expander("View original values"):
+        st.dataframe(observations, hide_index=True)
+    evidence = {"is_synthetic": True, "source": "deterministic synthetic generator",
+                "plan": asdict(plan), "units": meta["unit"],
+                "coverage": coverage_details(window), "analysis": asdict(result),
+                "challenges": rows}
+    st.download_button("Download synthetic observations (CSV)",
+                       observations.to_csv(index=False).encode(), "synthetic_observations.csv", "text/csv")
+    st.download_button("Download evidence record (JSON)",
+                       json.dumps(evidence, ensure_ascii=False, indent=2, allow_nan=False).encode(),
+                       "synthetic_evidence.json", "application/json")
 
-    challenge_rows = build_challenges(
-        plan,
-        result,
-        full_series,
-        fixed_climatology,
-    )
 
-    for row in challenge_rows:
-        with st.container(border=True):
-            st.markdown(f"**{row.label}**")
-            st.write(row.note)
-
-            if row.display_method == "HAC":
-                slope_text = f"{row.result.slope_per_decade:.3f}/decade"
-                p_text = f"{row.result.hac_p:.3g} (HAC)"
-            elif row.display_method == "Sen":
-                slope_text = f"{row.result.sen_per_decade:.3f}/decade (Sen)"
-                p_text = "cross-check only"
-            else:
-                slope_text = f"{row.result.slope_per_decade:.3f}/decade"
-                p_text = f"{row.result.p:.3g}"
-
-            st.write(
-                f"Slope: {slope_text} · p-value: {p_text} · "
-                f"coverage: {row.result.coverage:.1%} · "
-                f"{row.result.verdict}"
-            )
-
-            if row.category == "coverage":
-                st.write(
-                    "Passes this threshold: "
-                    + ("yes" if row.coverage_passes else "no")
-                )
-            elif row.category == "date" and row.coverage_passes is False:
-                st.write("Coverage rule passes: no")
+if __name__ == "__main__":
+    main()
