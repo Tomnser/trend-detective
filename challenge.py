@@ -136,3 +136,16 @@ def build_challenge_rows(plan: Plan, baseline: TrendResult) -> list[ChallengeRow
         threshold_result = TrendResult(**{**baseline.__dict__, "settings": {**baseline.settings, "coverage_threshold": threshold, "month_threshold": month_threshold, "coverage_passes_variant": passes}})
         rows.append(ChallengeRow("coverage", f"Coverage: {label}", threshold_result, note))
     return rows
+
+
+def regional_summary(rows: list[ChallengeRow], baseline: TrendResult) -> str:
+    """'k of N cells significant' over the baseline cell + computed neighbour cells.
+
+    Only significance verdicts are counted: rows without a result and rows with the
+    "descriptive only" verdict (no significance test) are excluded from k and N.
+    """
+    tested = [baseline] + [r.result for r in rows if r.check == "region" and r.result is not None]
+    tested = [r for r in tested if r.verdict != "descriptive only"]
+    k = sum(r.verdict.startswith("significant") for r in tested)
+    return (f"{k} of {len(tested)} cells significant "
+            "(cells are spatially correlated; counts are not independent confirmations)")

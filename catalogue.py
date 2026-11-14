@@ -43,6 +43,8 @@ SUPPORTED_VARIABLES = {
     },
 }
 LAST_YEAR = 2025
+# Preset places (query points; the data come from the grid cell containing each point).
+PLACES = {"Milan": (45.4642, 9.19), "Po Valley": (45.0, 10.0), "Bergamo": (45.6983, 9.6773)}
 DEFAULT_VARIABLES = {
     "temperature": ["MERRA2_T2M"],
     "precipitation": ["GPM_PRECIP"],

@@ -10,7 +10,7 @@ import pandas as pd
 import requests
 from dotenv import load_dotenv
 
-from catalogue import LAST_YEAR, get_variable_meta, meta_for_api_id
+from catalogue import LAST_YEAR, PLACES, get_variable_meta, meta_for_api_id
 from contracts import Plan
 from processing import CONVERTERS, parse_giovanni_csv
 
@@ -179,3 +179,23 @@ def load_plan_metadata(plan: Plan) -> dict:
         "units": a.get("units"),
         "from_cache": a.get("from_cache"),
     }
+
+
+def places_sharing_cell(variable_name: str, place: str) -> list[str]:
+    """Other preset places whose point falls in the same grid cell as `place` for this variable."""
+    def cell(name: str) -> tuple[float, float]:
+        lat, lon = PLACES[name]
+        a = load_full_series(variable_name, name, lat, lon).attrs
+        return (a["cell_lat"], a["cell_lon"])
+
+    mine = cell(place)
+    shared = []
+    for other in PLACES:
+        if other == place:
+            continue
+        try:
+            if cell(other) == mine:
+                shared.append(other)
+        except (RuntimeError, ValueError, OSError):
+            continue  # cannot load the other place: no claim either way
+    return shared

@@ -11,14 +11,13 @@ import streamlit as st
 from plotly.subplots import make_subplots
 
 from analysis import trend_analysis, validate_plan
-from catalogue import DEFAULT_VARIABLES, LAST_YEAR, get_variable_meta
-from challenge import build_challenge_rows
+from catalogue import DEFAULT_VARIABLES, LAST_YEAR, PLACES, get_variable_meta
+from challenge import build_challenge_rows, regional_summary
 from contracts import Plan
-from data_access import load_full_series, load_plan_metadata, load_series_for_plan
+from data_access import load_full_series, load_plan_metadata, load_series_for_plan, places_sharing_cell
 from explanations import result_summary
 from processing import anomaly_series, climatology_for
 
-PLACES = {"Milan": (45.4642, 9.19), "Po Valley": (45.0, 10.0), "Bergamo": (45.6983, 9.6773)}
 # (button label, place, variable, start year): examples fill in the form; they don't run it.
 EXAMPLES = [
     ("Is Milan warming?", "Milan", "MERRA2_T2M", 1981),
@@ -99,7 +98,8 @@ def run_investigation(plan: Plan) -> dict:
     full_record = load_full_series(variable, plan.place, plan.lat, plan.lon)
     validation = validate_plan(plan, series)
     bundle = {"plan": plan, "series": series, "full": full_record, "validation": validation,
-              "meta": load_plan_metadata(plan), "result": None, "challenges": [], "challenge_error": None}
+              "meta": load_plan_metadata(plan), "result": None, "challenges": [], "challenge_error": None,
+              "shared_with": places_sharing_cell(variable, plan.place)}
     if validation.status != "supported":
         return bundle
     bundle["result"] = trend_analysis(plan, variable, series, reference_series=full_record)
@@ -121,6 +121,8 @@ def render_results(bundle: dict) -> None:
                f"{cell['lat']}, {cell['lon']} (cell size {meta['grid_resolution']['lat']}° × {meta['grid_resolution']['lon']}°)")
     st.caption(f"Dataset: {meta['dataset']} · DOI: {meta['doi']} · retrieved {meta['retrieval_time']}"
                f" · {'from local cache' if meta['from_cache'] else 'downloaded now'}")
+    for other in bundle.get("shared_with", []):
+        st.warning(f"Same grid cell as {other}; not an independent result.")
 
     validation, result = bundle["validation"], bundle["result"]
     if result is None:
@@ -169,6 +171,7 @@ def render_results(bundle: dict) -> None:
         })
     if rows:
         st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+        st.caption("Regional check: " + regional_summary(bundle["challenges"], result))
 
     observations = pd.DataFrame({
         "date": series.index.strftime("%Y-%m-%d"), "value": series.to_numpy(), "anomaly": anomalies.to_numpy(),
