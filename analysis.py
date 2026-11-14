@@ -84,6 +84,53 @@ def years_to_detect(sigma_n: float, omega_per_year: float, phi: float) -> float:
     return float(((3.3 * sigma_n / abs(omega_per_year)) * np.sqrt((1 + phi) / (1 - phi))) ** (2.0 / 3.0))
 
 
+def _explainer_numbers(series, baseline, climatology, clean, beta, residuals, se_beta, adjusted_se,
+                       r1, n_eff, t_stat, adjusted_df, p_value, ci) -> dict:
+    """The four explainer steps as plain numbers. Nothing here feeds back into the result."""
+    raw = series.dropna()
+    reference = baseline.dropna()
+    window_years = len(series) / 12.0
+    return {
+        "raw": {  # step 1: the monthly data as downloaded and converted
+            "first_month": f"{series.index[0]:%Y-%m}",
+            "last_month": f"{series.index[-1]:%Y-%m}",
+            "months": int(len(series)),
+            "months_missing": int(series.isna().sum()),
+            "mean": float(raw.mean()),
+            "min": float(raw.min()),
+            "max": float(raw.max()),
+            "sd": float(raw.std(ddof=1)),
+        },
+        "seasonal": {  # step 2: subtract each calendar month's mean over the full record
+            "climatology": [float(climatology.get(m, float("nan"))) for m in range(1, 13)],  # January..December
+            "climatology_first_month": f"{reference.index[0]:%Y-%m}",
+            "climatology_last_month": f"{reference.index[-1]:%Y-%m}",
+            "seasonal_range": float(climatology.max() - climatology.min()),
+            "anomaly_sd": float(clean.std(ddof=1)),
+        },
+        "fit": {  # step 3: straight line through the anomalies
+            "slope_per_year": float(beta[1]),
+            "slope_per_decade": float(beta[1] * 10.0),
+            "anomaly_at_start": float(beta[0]),
+            "window_years": float(window_years),
+            "total_change": float(beta[1] * window_years),
+            "residual_sd": float(np.std(residuals, ddof=1)),
+        },
+        "uncertainty": {  # step 4: widen the error for month-to-month memory, then test
+            "months_used": int(len(clean)),
+            "lag1_autocorrelation": float(r1),
+            "effective_months": float(n_eff),
+            "naive_se_per_decade": float(se_beta * 10.0),
+            "adjusted_se_per_decade": float(adjusted_se * 10.0),
+            "t": float(t_stat),
+            "df": float(adjusted_df),
+            "p": float(p_value),
+            "ci_low": float(ci[0]),
+            "ci_high": float(ci[1]),
+        },
+    }
+
+
 def trend_analysis(
     plan: Plan,
     variable_name: str | None = None,
@@ -98,7 +145,8 @@ def trend_analysis(
     series = series.sort_index().astype(float)
     # Reference series pins the calendar-month climatology across date-window challenges.
     baseline = reference_series if reference_series is not None else series
-    anomalies = anomaly_series(series, climatology_for(baseline))
+    climatology = climatology_for(baseline)
+    anomalies = anomaly_series(series, climatology)
     clean = anomalies.dropna()
     if len(clean) < 3:
         raise ValueError("At least three non-missing monthly values are needed to fit a trend.")
@@ -151,6 +199,9 @@ def trend_analysis(
         "start": plan.start,
         "end": plan.end,
         "hac_lag_months": 12,
+        # Numbers for the "How we got this" explainer, one group per step. Display units throughout.
+        "explainer": _explainer_numbers(series, baseline, climatology, clean, beta, residuals,
+                                        se_beta, adjusted_se, r1, n_eff, t_stat, adjusted_df, p_value, ci),
     }
     warnings = [
         "AR(1) effective sample size is a rough adjustment, not a full solution to autocorrelation.",
