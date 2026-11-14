@@ -77,27 +77,36 @@ CONVERTERS = {
 
 
 def coverage(s: pd.Series) -> dict[str, float]:
-    """Data completeness of a monthly series.
+    """Data completeness of a monthly series (index = every month of the window).
 
     - frac_present: fraction of months that are not NaN
     - full_years: number of calendar years with all 12 months present
-    - min_month_frac: over the 12 calendar months, the minimum fraction of
-      years in which that month is present
+    - min_month_frac: over the 12 calendar months, the minimum fraction of that
+      month's occurrences in the window that are present
     """
     present = s.notna()
-    years = s.index.year
-    per_year = present.groupby(years).sum()
-    per_month = present.groupby(s.index.month).sum() / years.nunique()
+    per_year = present.groupby(s.index.year).sum()
+    per_month = present.groupby(s.index.month).mean()
     per_month = per_month.reindex(range(1, 13), fill_value=0.0)
     return {
-        "frac_present": float(present.mean()),
+        "frac_present": float(present.mean()) if len(s) else 0.0,
         "full_years": int((per_year == 12).sum()),
         "min_month_frac": float(per_month.min()),
     }
 
 
+def coverage_ok(s: pd.Series, *, threshold: float = 0.80, month_threshold: float = 0.70,
+                min_years: int = 10) -> tuple[bool, dict[str, float]]:
+    """Coverage rule: >= min_years complete years, >= threshold of months overall,
+    and >= month_threshold for every calendar month."""
+    cov = coverage(s)
+    ok = (cov["full_years"] >= min_years and cov["frac_present"] >= threshold
+          and cov["min_month_frac"] >= month_threshold)
+    return ok, cov
+
+
 # ---------------------------------------------------------------------------
-# Analysis helpers (from Person 2, appended unchanged)
+# Analysis helpers (from Person 2)
 # ---------------------------------------------------------------------------
 
 def climatology_for(series: pd.Series) -> pd.Series:
@@ -115,46 +124,6 @@ def anomaly_series(series: pd.Series, climatology: pd.Series | None = None) -> p
         return pd.Series(index=ordered.index, dtype=float, name=series.name)
     month_means = ordered.index.month.map(climatology)
     return pd.Series(ordered.to_numpy() - np.asarray(month_means, dtype=float), index=ordered.index, name=series.name)
-
-
-def monthly_coverage(series: pd.Series) -> dict:
-    if series.empty:
-        return {"months_present": 0.0, "full_years": 0, "months_per_year": {}}
-    start = series.index.min().to_period("M").to_timestamp()
-    end = series.index.max().to_period("M").to_timestamp()
-    expected = pd.date_range(start, end, freq="MS")
-    present = series.reindex(expected).notna()
-    total_years = end.year - start.year + 1
-    by_year = {}
-    for year in range(start.year, end.year + 1):
-        year_index = expected[expected.year == year]
-        by_year[str(year)] = int(series.reindex(year_index).notna().sum())
-    return {
-        "months_present": float(present.sum() / len(expected)) if len(expected) else 0.0,
-        "full_years": total_years,
-        "months_per_year": by_year,
-    }
-
-
-def series_coverage_ok(series: pd.Series, *, threshold: float = 0.80, month_threshold: float = 0.70, minimum_years: int = 10) -> tuple[bool, dict]:
-    cov = monthly_coverage(series)
-    if series.empty:
-        return False, cov
-    start = series.index.min().to_period("M").to_timestamp()
-    end = series.index.max().to_period("M").to_timestamp()
-    expected = pd.date_range(start, end, freq="MS")
-    month_fractions = {}
-    for month in range(1, 13):
-        expected_months = expected[expected.month == month]
-        present = series.reindex(expected_months).notna().sum()
-        month_fractions[month] = float(present / len(expected_months)) if len(expected_months) else 0.0
-    cov["calendar_month_coverage"] = month_fractions
-    ok = (
-        cov["full_years"] >= minimum_years
-        and cov["months_present"] >= threshold
-        and all(value >= month_threshold for value in month_fractions.values())
-    )
-    return ok, cov
 
 
 def seasonal_sen_slope(series: pd.Series) -> float:

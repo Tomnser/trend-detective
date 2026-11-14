@@ -47,5 +47,5 @@ class TrendResult:
 class ChallengeRow:
     check: Literal["date", "region", "method", "coverage"]
     label: str
-    result: TrendResult
+    result: Optional[TrendResult]  # None when the variant could not be computed (see note)
     note: str

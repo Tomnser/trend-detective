@@ -7,7 +7,7 @@ from scipy import stats
 from catalogue import SUPPORTED_VARIABLES
 from contracts import Plan, TrendResult, Validation
 from data_access import load_series_for_plan
-from processing import anomaly_series, climatology_for, seasonal_sen_slope, series_coverage_ok
+from processing import anomaly_series, climatology_for, coverage_ok, seasonal_sen_slope
 
 
 def validate_plan(plan: Plan, series: pd.Series | None = None) -> Validation:
@@ -23,11 +23,11 @@ def validate_plan(plan: Plan, series: pd.Series | None = None) -> Validation:
         return Validation("incomplete", "The date range is invalid.", "Choose a start date earlier than the end date.")
     if series is None:
         series = load_series_for_plan(plan)
-    ok, coverage = series_coverage_ok(series)
+    ok, coverage = coverage_ok(series)
     if not ok:
         return Validation(
             "incomplete",
-            f"Coverage rules failed: {coverage['full_years']} calendar years and {coverage['months_present']:.1%} of months present; requirements are at least 10 years, 80% overall, and 70% for each calendar month.",
+            f"Coverage rules failed: {coverage['full_years']} complete years (all 12 months), {coverage['frac_present']:.1%} of months present and {coverage['min_month_frac']:.0%} for the worst calendar month; requirements are at least 10 complete years, 80% overall, and 70% for each calendar month.",
             "Try a longer date window or a series with more complete monthly coverage.",
         )
     return Validation("supported", "Coverage and variable meet the configured rules.")
@@ -106,7 +106,7 @@ def trend_analysis(
     else:
         verdict = "not enough evidence"
 
-    coverage = series_coverage_ok(series)[1]["months_present"]
+    coverage = coverage_ok(series)[1]["frac_present"]
     sen = seasonal_sen_slope(anomalies)
     hac_p = _hac_p_value(x, y, beta, residuals, max_lag=12)
     # Transparent rough display estimate, not a forecast or a power calculation.

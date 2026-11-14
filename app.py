@@ -142,6 +142,9 @@ def render_results(bundle: dict) -> None:
     rows = []
     for row in bundle["challenges"]:
         r = row.result
+        if r is None:  # variant could not be computed; the note says why
+            rows.append({"Check": row.check, "Variant": row.label, "Verdict": "unavailable", "What changes": row.note})
+            continue
         rows.append({
             "Check": row.check,
             "Variant": row.label,
@@ -164,7 +167,8 @@ def render_results(bundle: dict) -> None:
     })
     evidence = _jsonable({
         "plan": asdict(plan), "provenance": meta, "result": asdict(result),
-        "challenges": [{"check": c.check, "label": c.label, "note": c.note, "result": asdict(c.result)}
+        "challenges": [{"check": c.check, "label": c.label, "note": c.note,
+                        "result": asdict(c.result) if c.result is not None else None}
                        for c in bundle["challenges"]],
     })
     with st.expander("Values and source metadata"):
