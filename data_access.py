@@ -21,6 +21,28 @@ API_URL = "https://api.giovanni.earthdata.nasa.gov/timeseries"
 load_dotenv(ROOT / ".env")
 
 
+class NoDataError(ValueError):
+    """The dataset has no values at this point. `reason` is "no values" (the cell is masked,
+    e.g. a land-only model over water or ice) or "outside coverage" (the source refused the point)."""
+
+    def __init__(self, var_id: str, lat: float, lon: float, reason: str):
+        meta = meta_for_api_id(var_id)
+        label = meta["label"] if meta else var_id
+        if reason == "outside coverage":
+            text = f"{label} does not cover the point {lat:.2f}, {lon:.2f}."
+        else:
+            text = (f"{label} has no data at {lat:.2f}, {lon:.2f}. "
+                    "This grid cell has no values, for example because it is over water or ice.")
+        super().__init__(text + " Choose another point.")
+        self.var_id, self.lat, self.lon, self.reason = var_id, lat, lon, reason
+
+
+def _check_point(lat: float, lon: float) -> None:
+    if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):  # also false for NaN
+        raise ValueError(f"The point {lat}, {lon} is not valid: latitude must be between -90 and 90, "
+                         "longitude between -180 and 180.")
+
+
 def _month(ts: str) -> pd.Timestamp:
     return pd.Timestamp(ts).to_period("M").to_timestamp()  # first of month
 
@@ -58,6 +80,8 @@ def fetch_csv(var_id: str, lat: float, lon: float, start: str, end: str,
             r = requests.get(API_URL, params=params, headers=headers, timeout=timeout)
             if r.status_code == 200:
                 return r.text
+            if r.status_code == 404:  # Giovanni: "Data ... was not found for the requested latitude"
+                raise NoDataError(var_id, lat, lon, "outside coverage")
             err = f"HTTP {r.status_code}: {r.text[:500]}"
             if r.status_code < 500:
                 break  # client error: retrying won't help
@@ -73,6 +97,7 @@ def _float_or_none(meta: dict[str, str], key: str) -> float | None:
 
 def get_monthly(var_id: str, lat: float, lon: float, start: str, end: str) -> pd.Series:
     """Monthly series in source units (freq MS, NaN for missing months), cached as the raw CSV."""
+    _check_point(lat, lon)  # before any download
     lat, lon = round(lat, 2), round(lon, 2)
     path = cache_path(var_id, lat, lon, start, end)
     from_cache = path.exists()
@@ -131,7 +156,7 @@ def _full_series_cached(variable_name: str, lat: float, lon: float) -> pd.Series
     s.attrs["source_units"] = meta["source_unit"]
     last = s.last_valid_index()
     if last is None:
-        raise ValueError(f"{variable_name} at {lat:.2f}, {lon:.2f}: the source returned no valid months.")
+        raise NoDataError(meta["api_id"], lat, lon, "no values")
     attrs = s.attrs
     s = s.loc[:last]  # trim trailing all-NaN months (e.g. not yet processed)
     s.attrs = attrs

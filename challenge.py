@@ -147,13 +147,14 @@ def window_grid(plan: Plan, variable: str) -> pd.DataFrame:
     return grid
 
 
-def build_challenge_rows(plan: Plan, baseline: TrendResult) -> list[ChallengeRow]:
+def build_challenge_rows(plan: Plan, baseline: TrendResult, neighbours: bool = True) -> list[ChallengeRow]:
+    """All challenge rows. `neighbours=False` skips the 4 nearby cells (4 downloads for a new point)."""
     variable = plan.variables[0]
     full_record = load_full_series(variable, plan.place, plan.lat, plan.lon)
     rows: list[ChallengeRow] = []
     rows += _date_rows(plan, variable, full_record)
-    rows += _neighbour_rows(plan, variable, full_record)
-
+    if neighbours:
+        rows += _neighbour_rows(plan, variable, full_record)
     rows += _method_rows(plan, variable, full_record, baseline)
 
     data = load_series_for_plan(plan, variable)
