@@ -1,3 +1,323 @@
+"""Trend Detective: interface, processing validation and trend analysis only.
+
+Save this file as app.py beside your friend's ORIGINAL data_access.py and
+processing.py. This file contains NO HTTP client, file extractor, mock generator
+or embedded observations. Your friend's module owns retrieval and caching.
+
+Install app dependencies:
+    python -m pip install streamlit pandas numpy scipy
+Also install your friend's requirements (currently requests and python-dotenv).
+Run:
+    python -m streamlit run app.py
+
+EXISTING GIOVANNI CONTRACT (unchanged):
+    data_access.get_monthly(var_id, lat, lon, start, end) -> pandas.Series
+    processing.to_celsius(series) -> pandas.Series
+    processing.parse_giovanni_csv(text) remains used internally by data_access.
+
+Monthly series: DatetimeIndex; numeric values; NaN for missing months.
+Metadata in series.attrs: units, var_id, dataset, version, cell_lat, cell_lon,
+query_lat, query_lon, retrieved. Never place credentials in series metadata.
+
+To connect another source, add an adapter to SOURCE_LOADERS and a verified
+variable entry to VARIABLES. Each adapter takes the SAME five arguments and
+returns the SAME Series contract. No source-specific retrieval belongs here.
+"""
+from __future__ import annotations
+from dataclasses import asdict, dataclass, field
+import importlib
+import json
+import numpy as np
+import pandas as pd
+import streamlit as st
+from scipy import stats
+
+VARIABLE_ID = "M2IMNXASM_5_12_4_T2M"
+VARIABLES = {VARIABLE_ID: {
+    "label": "MERRA-2 air temperature at 2 m", "source_unit": "K", "unit": "°C",
+    "product": "M2IMNXASM.5.12.4", "version": "5.12.4", "field": "T2M",
+    "doi": "10.5067/5ESKGQTZG7FO", "first_year": 1981, "last_year": 2025,
+    "description": "Monthly air temperature from NASA atmospheric reanalysis; a sampled grid cell, not a city average.",
+}}
+PLACES = {"Milan": (45.46, 9.19), "Po Valley point": (45.00, 10.00), "Bergamo": (45.70, 9.68)}
+REFERENCE_START = "1981-01-01"
+REFERENCE_END = "2010-12-01"
+
+# Add new sources only after verifying their identifiers and units.
+VARIABLES[VARIABLE_ID].update(source="giovanni", conversion="kelvin_to_celsius",
+                              reference_start=REFERENCE_START, reference_end=REFERENCE_END)
+
+
+
+@dataclass
+class Plan:
+    place: str
+    lat: float
+    lon: float
+    variable: str
+    start: str
+    end: str
+
+@dataclass
+class TrendResult:
+    slope_per_decade: float
+    ci: tuple[float, float]
+    p: float
+    verdict: str
+    n: int
+    coverage: float
+    sen_per_decade: float
+    settings: dict = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
+
+
+def series_for_window(series: pd.Series, start: str, end: str) -> pd.Series:
+    start_month = pd.Timestamp(start).to_period("M").to_timestamp()
+    end_month = pd.Timestamp(end).to_period("M").to_timestamp()
+    if start_month > end_month:
+        raise ValueError("Choose a start month before the end month.")
+    result = series.reindex(pd.date_range(start_month, end_month, freq="MS"))
+    result.index.name = "time"
+    result.attrs = dict(series.attrs)
+    return result
+
+def coverage(series: pd.Series) -> dict:
+    if series.empty:
+        return {"frac_present": 0.0, "full_years": 0, "min_month_frac": 0.0}
+    series = series_for_window(series, str(series.index.min()), str(series.index.max()))
+    present = pd.Series(np.isfinite(series.to_numpy()), index=series.index)
+    by_year = present.groupby(present.index.year).sum()
+    by_month = present.groupby(present.index.month).mean().reindex(range(1, 13), fill_value=0.)
+    return {"frac_present": float(present.mean()), "full_years": int((by_year == 12).sum()),
+            "min_month_frac": float(by_month.min())}
+
+def monthly_climatology(series: pd.Series) -> pd.Series:
+    return series.groupby(series.index.month).mean()
+
+def monthly_anomalies(series: pd.Series, reference: pd.Series) -> pd.Series:
+    result = series - np.asarray(series.index.month.map(reference), dtype=float)
+    result.attrs = dict(series.attrs)
+    return result
+
+def seasonal_sen_slope(anomalies: pd.Series) -> float:
+    """Median pairwise slope within each calendar month, per decade."""
+    clean = anomalies.dropna().sort_index()
+    slopes = []
+
+    for month in range(1, 13):
+        subset = clean[clean.index.month == month]
+        years = subset.index.year.to_numpy(dtype=float)
+        values = subset.to_numpy(dtype=float)
+
+        for i in range(len(values) - 1):
+            for j in range(i + 1, len(values)):
+                if years[j] != years[i]:
+                    slopes.append(
+                        (values[j] - values[i]) / (years[j] - years[i])
+                    )
+
+    return float(np.median(slopes) * 10.0) if slopes else float("nan")
+
+def analyze_trend(plan: Plan, series: pd.Series,
+                  fixed_climatology: pd.Series) -> TrendResult:
+    """Exploratory OLS with one consistent Bartlett HAC uncertainty estimate.
+
+    Require a complete monthly sequence: observation lags then equal month lags.
+    This demonstration method still requires scientific validation for real data.
+    """
+    expected = series_for_window(series, plan.start, plan.end)
+    if expected.empty or not np.isfinite(expected.to_numpy(dtype=float)).all():
+        raise ValueError("Trend inference requires a complete, finite monthly series. Missing months are not filled.")
+    if coverage(expected)["full_years"] < 10:
+        raise ValueError("Trend inference requires at least ten complete years and adequate coverage.")
+    anomalies = monthly_anomalies(expected, fixed_climatology)
+    if not np.isfinite(anomalies.to_numpy()).all():
+        raise ValueError("The fixed reference is missing calendar-month means.")
+    t = np.arange(len(anomalies), dtype=float) / 12.0
+    design = np.column_stack((np.ones(len(t)), t))
+    coefficients = np.linalg.lstsq(design, anomalies.to_numpy(), rcond=None)[0]
+    residuals = anomalies.to_numpy() - design @ coefficients
+    n = len(t)
+    lag = min(12, n - 1)
+    scores = design * residuals[:, None]
+    meat = scores.T @ scores
+    for offset in range(1, lag + 1):
+        gamma = scores[offset:].T @ scores[:-offset]
+        meat += (1.0 - offset / (lag + 1)) * (gamma + gamma.T)
+    bread = np.linalg.pinv(design.T @ design)
+    covariance = bread @ meat @ bread * n / (n - 2)
+    se = float(np.sqrt(max(covariance[1, 1], 0.0)))
+    slope = float(coefficients[1])
+    if se <= 1e-14:
+        raise ValueError("Residual variation is too small for meaningful uncertainty estimation.")
+    p = float(2 * stats.norm.sf(abs(slope / se)))
+    critical = float(stats.norm.ppf(0.975))
+    ci = ((slope - critical * se) * 10, (slope + critical * se) * 10)
+    verdict = ("significant increase" if slope > 0 else "significant decrease") if p < .05 else "not enough evidence"
+    return TrendResult(
+        slope_per_decade=slope * 10, ci=ci, p=p, verdict=verdict,
+        n=n, coverage=1.0,
+        sen_per_decade=seasonal_sen_slope(anomalies),
+        settings={"method": "OLS on fixed-reference monthly anomalies; Bartlett HAC",
+                  "hac_lag_months": lag, "small_sample_factor": "n/(n-2)",
+                  "reference": "fixed calendar-month means",
+                  "reference_start": VARIABLES[plan.variable]["reference_start"],
+                  "reference_end": VARIABLES[plan.variable]["reference_end"],
+                  "missing_data_policy": "reject gaps for inference; no filling",
+                  "interval": "95% asymptotic normal", "alpha": .05,
+                  "variable": plan.variable, "start": plan.start, "end": plan.end},
+        warnings=["Exploratory estimate: a fixed 12-month HAC lag may not capture longer-term dependence.",
+                  "Sensitivity checks do not correct for selecting an interesting result.",
+                  "Interpret the result using the source definition and spatial footprint; it is not automatically a regional average."])
+
+def load_giovanni_series(var_id: str, lat: float, lon: float,
+                         start: str, end: str) -> pd.Series:
+    """Call your friend's original five-argument function without changing it."""
+    try:
+        module = importlib.import_module("data_access")
+    except ImportError as error:
+        raise RuntimeError(
+            "Place your friend's data_access.py and processing.py beside app.py "
+            f"and install their dependencies. Import problem: {error.name}"
+        ) from error
+    loader = getattr(module, "get_monthly", None)
+    if not callable(loader):
+        raise RuntimeError("data_access.py must expose get_monthly(var_id, lat, lon, start, end).")
+    return loader(var_id, lat, lon, start, end)
+
+
+# Other-source adapter example (after your friend implements it):
+# from noaa_access import get_monthly as get_noaa_monthly
+# SOURCE_LOADERS["noaa"] = get_noaa_monthly
+# VARIABLES[VERIFIED_ID] = {
+#     "label": "Verified name", "source": "noaa", "source_unit": "°C",
+#     "unit": "°C", "conversion": "identity", "first_year": 1981,
+#     "last_year": 2025, "reference_start": "1981-01-01",
+#     "reference_end": "2010-12-01", "description": "Verified definition"}
+SOURCE_LOADERS = {"giovanni": load_giovanni_series}
+
+
+def load_source_series(var_id: str, lat: float, lon: float,
+                       start: str, end: str) -> pd.Series:
+    """Validate the shared return contract; never retrieve or fabricate data."""
+    meta = VARIABLES[var_id]
+    loader = SOURCE_LOADERS.get(meta["source"])
+    if not callable(loader):
+        raise ValueError(f"No adapter registered for source {meta['source']!r}.")
+    raw = loader(var_id, lat, lon, start, end)
+    if not isinstance(raw, pd.Series) or not isinstance(raw.index, pd.DatetimeIndex):
+        raise ValueError("The source adapter must return a pandas.Series with a DatetimeIndex.")
+    if raw.attrs.get("is_synthetic"):
+        raise ValueError("Synthetic data are not accepted by this real-data interface.")
+    if raw.attrs.get("var_id", var_id) != var_id:
+        raise ValueError("The adapter returned a different variable identifier.")
+    if raw.attrs.get("units") != meta["source_unit"]:
+        raise ValueError(f"Expected {meta['source_unit']!r} from the adapter; got {raw.attrs.get('units')!r}.")
+    index = raw.index
+    if index.hasnans:
+        raise ValueError("The source returned invalid dates.")
+    if index.tz is not None:
+        index = index.tz_convert("UTC").tz_localize(None)
+    index = index.to_period("M").to_timestamp()
+    if index.has_duplicates:
+        raise ValueError("Duplicate months: the adapter must aggregate to monthly values first.")
+    attrs = dict(raw.attrs)
+    try:
+        values = pd.to_numeric(raw, errors="raise").to_numpy(dtype=float)
+    except (TypeError, ValueError) as error:
+        raise ValueError("The adapter must return numeric values and missing-value codes as NaN.") from error
+    values[~np.isfinite(values)] = np.nan
+    raw = pd.Series(values, index=index, name=var_id).sort_index()
+    raw.attrs = attrs
+    if not raw.notna().any():
+        raise ValueError("The source returned no usable monthly observations.")
+    if meta["conversion"] == "kelvin_to_celsius":
+        try:
+            converter = importlib.import_module("processing").to_celsius
+        except (ImportError, AttributeError) as error:
+            raise RuntimeError("Your friend's processing.py must expose to_celsius(series).") from error
+        full = converter(raw)
+    elif meta["conversion"] == "identity":
+        full = raw.copy()
+    else:
+        raise ValueError("Register an explicit, verified unit conversion for this variable.")
+    if not isinstance(full, pd.Series) or not full.index.equals(raw.index):
+        raise ValueError("The conversion must preserve monthly dates and return a pandas.Series.")
+    if full.attrs.get("units") != meta["unit"]:
+        raise ValueError("The converter did not return the configured display units.")
+    allowed = ("var_id", "name", "units", "source_units", "conversion", "dataset", "version",
+               "doi", "cell_lat", "cell_lon", "lat_resolution", "lon_resolution", "query_lat",
+               "query_lon", "retrieved", "from_cache", "source", "raw_csv_sha256")
+    metadata = {key: full.attrs[key] for key in allowed if key in full.attrs}
+    metadata.update(var_id=var_id, source_adapter=meta["source"],
+                    query_lat=lat, query_lon=lon, is_synthetic=False)
+    full.attrs = metadata
+    return series_for_window(full, start, end)
+
+
+
+
+def run_investigation(plan: Plan) -> dict:
+    config = VARIABLES.get(plan.variable)
+    if config is None:
+        raise ValueError("This variable has no verified NASA data adapter.")
+    if pd.Timestamp(plan.start) > pd.Timestamp(plan.end):
+        raise ValueError("Choose a start before the end.")
+    if (pd.Timestamp(plan.start).year < config["first_year"] or
+            pd.Timestamp(plan.end).year > config["last_year"]):
+        raise ValueError("The selected dates are outside the configured data period.")
+    # Request one full record, then reuse it for reference means and all date checks.
+    full = load_source_series(plan.variable, plan.lat, plan.lon,
+                              f"{config['first_year']}-01-01", f"{config['last_year']}-12-01")
+    reference_start, reference_end = config["reference_start"], config["reference_end"]
+    reference_series = series_for_window(full, reference_start, reference_end)
+    if not np.isfinite(reference_series.to_numpy()).all():
+        raise ValueError("The configured fixed reference is incomplete. No alternate baseline was substituted.")
+    reference = monthly_climatology(reference_series)
+    selected = series_for_window(full, plan.start, plan.end)
+    anomalies = monthly_anomalies(selected, reference)
+    result, analysis_error = None, None
+    try:
+        result = analyze_trend(plan, selected, reference)
+    except ValueError as error:
+        # The original data can still be inspected and exported.
+        analysis_error = str(error)
+    challenges = []
+    windows = {(max(config["first_year"], year), pd.Timestamp(plan.end).year)
+               for year in (1981, 1990, 2000, 2010)}
+    for year, end_year in sorted(windows):
+        if year > end_year:
+            continue
+        start = f"{year}-01-01"
+        variant = Plan(plan.place, plan.lat, plan.lon, plan.variable, start, plan.end)
+        window = series_for_window(full, variant.start, variant.end)
+        try:
+            alternative = analyze_trend(variant, window, reference)
+            item = {"check": "date", "label": f"{start[:7]} to {plan.end[:7]}",
+                    "status": "ok", "plan": asdict(variant), "analysis": asdict(alternative)}
+        except ValueError as error:
+            item = {"check": "date", "label": f"{start[:7]} to {plan.end[:7]}",
+                    "status": "unavailable", "plan": asdict(variant), "reason": str(error)}
+        challenges.append(item)
+    details = coverage(selected)
+    for name, threshold in (("80% overall / 70% per calendar month", (.8, .7)),
+                            ("90% overall / 75% per calendar month", (.9, .75))):
+        challenges.append({"check": "coverage", "label": name, "status": "evaluated",
+                           "passes": details["full_years"] >= 10 and details["frac_present"] >= threshold[0]
+                           and details["min_month_frac"] >= threshold[1],
+                           "note": "Coverage screening only; no trend is refitted. Inference separately requires no monthly gaps."})
+    observations = pd.DataFrame({"date": selected.index.strftime("%Y-%m-%d"),
+                                 "value": selected.to_numpy(), "anomaly": anomalies.to_numpy(),
+                                 "units": config["unit"], "source_units": config["source_unit"], "variable": plan.variable,
+                                 "cell_lat": full.attrs.get("cell_lat"), "cell_lon": full.attrs.get("cell_lon"),
+                                 "is_synthetic": False})
+    evidence = {"schema_version": 1, "is_synthetic": False, "plan": asdict(plan),
+                "provenance": full.attrs, "coverage": details,
+                "reference": {"start": reference_start, "end": reference_end,
+                              "calendar_month_means": {int(k): float(v) for k, v in reference.items()}},
+                "analysis": asdict(result) if result else None, "analysis_error": analysis_error,
+                "challenges": challenges,
+                "limitations": ["Spatial footprint depends on the source adapter; do not assume regional coverage.",
                                 "Exploratory sensitivity checks do not adjust for selection bias.",
                                 "Precipitation and soil-moisture adapters are not enabled."]}
     return {"plan": plan, "series": selected, "anomalies": anomalies,
