@@ -84,6 +84,23 @@ def years_to_detect(sigma_n: float, omega_per_year: float, phi: float) -> float:
     return float(((3.3 * sigma_n / abs(omega_per_year)) * np.sqrt((1 + phi) / (1 - phi))) ** (2.0 / 3.0))
 
 
+YEARS_NEEDED_CAP = 100.0  # above this, years needed is not shown: the estimate is too rough to mean anything
+
+
+def smallest_detectable_trend(sigma_n: float, record_years: float, phi: float) -> float:
+    """Weatherhead et al. (1998), eq. 3, solved for the trend instead of the record length:
+
+        |omega|_min = 3.3 * sigma_N * sqrt((1 + phi) / (1 - phi)) / n ** (3/2)
+
+    The smallest trend, in variable units PER YEAR, that a record of n years would detect
+    (prob. 0.9, 5% level). Same sigma_N and phi (clipped to [0, 0.95]) as years_to_detect.
+    """
+    if record_years <= 0:
+        return float("inf")
+    phi = float(np.clip(phi, 0.0, 0.95))
+    return float(3.3 * sigma_n * np.sqrt((1 + phi) / (1 - phi)) / record_years ** 1.5)
+
+
 def _explainer_numbers(series, baseline, climatology, clean, beta, residuals, se_beta, adjusted_se,
                        r1, n_eff, t_stat, adjusted_df, p_value, ci) -> dict:
     """The four explainer steps as plain numbers. Nothing here feeds back into the result."""
@@ -192,8 +209,17 @@ def trend_analysis(
     # Weatherhead et al. 1998; beta[1] is the slope per YEAR (x is in decimal years).
     sigma_n = float(np.std(residuals, ddof=1)) if n > 1 else 0.0
     years_needed = years_to_detect(sigma_n, float(beta[1]), r1)
+    record_years = n / 12.0  # months actually present
     settings = {
         "variable": variable,
+        # Evidence line for "not enough evidence" (rough, model-dependent estimates).
+        "evidence": {
+            "record_years": float(record_years),
+            "smallest_detectable_trend_per_decade": smallest_detectable_trend(sigma_n, record_years, r1) * 10.0,
+            "years_needed_cap": YEARS_NEEDED_CAP,
+            # Total record length needed at the current rate; None when over the cap (or the slope is zero).
+            "years_needed_under_cap": years_needed if years_needed < YEARS_NEEDED_CAP else None,
+        },
         "method": method,
         "climatology": "fixed full-record calendar-month mean",
         "start": plan.start,
