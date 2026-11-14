@@ -1,0 +1,142 @@
+
+======================================================================================================================================================
+PART 1 · all configured windows: GLDAS soil moisture (0–10 cm) (mm water (top 10 cm) per decade), end 2025-12
+======================================================================================================================================================
+
+-- window 2001-01 to 2025-12
+cell                                         slope/dec              95% CI         p     hac_p      Sen Sen vs OLS  verdict
+Milan (cell 45.375, 9.125)                      -0.385 (  -1.074,  +0.304)     0.269     0.219   -0.277      agree  not enough evidence
+  Milan north (cell 45.875, 9.125)              -0.423 (  -0.961,  +0.114)     0.122    0.0857   -0.118      agree  not enough evidence
+  Milan south (cell 44.875, 9.125)              -1.020 (  -1.971,  -0.069)    0.0359    0.0196   -1.003      agree  significant decrease
+  Milan east (cell 45.375, 9.625)               -0.194 (  -1.075,  +0.686)     0.661     0.635   -0.047      agree  not enough evidence
+  Milan west (cell 45.375, 8.625)               -0.275 (  -1.176,  +0.626)     0.544     0.497   -0.230      agree  not enough evidence
+Bergamo (cell 45.625, 9.625)                    -0.199 (  -0.709,  +0.311)      0.44     0.367   -0.077      agree  not enough evidence
+  Bergamo north (cell 46.125, 9.625)            -0.289 (  -1.131,  +0.553)     0.498     0.413   -0.026      agree  not enough evidence
+  Bergamo south (cell 45.125, 9.625)            -0.065 (  -0.822,  +0.693)     0.865     0.858   +0.031   DISAGREE  not enough evidence
+  Bergamo east (cell 45.625, 10.125)            -0.256 (  -0.813,  +0.302)     0.365     0.291   -0.156      agree  not enough evidence
+  Bergamo west (cell 45.625, 9.125)             -0.422 (  -0.952,  +0.108)     0.117     0.021   -0.111      agree  not enough evidence  <- hac_p disagrees
+Po Valley (cell 45.125, 10.125)                 +0.026 (  -0.799,  +0.850)     0.951      0.95   +0.050      agree  not enough evidence
+  Po Valley north (cell 45.625, 10.125)         -0.256 (  -0.813,  +0.302)     0.365     0.291   -0.156      agree  not enough evidence  [same cell as Bergamo east]
+  Po Valley south (cell 44.625, 10.125)         -1.653 (  -2.669,  -0.638)   0.00187  0.000521   -1.581      agree  significant decrease
+  Po Valley east (cell 45.125, 10.625)          +0.031 (  -0.850,  +0.913)     0.944     0.938   +0.092      agree  not enough evidence
+  Po Valley west (cell 45.125, 9.625)           -0.065 (  -0.822,  +0.693)     0.865     0.858   +0.031   DISAGREE  not enough evidence  [same cell as Bergamo south]
+   2 of 13 distinct cells significant (15 rows; repeated cells counted once; cells are spatially correlated; counts are not independent confirmations)
+
+-- window 2011-01 to 2025-12
+cell                                         slope/dec              95% CI         p     hac_p      Sen Sen vs OLS  verdict
+Milan (cell 45.375, 9.125)                      -1.583 (  -2.787,  -0.380)    0.0109    0.0182   -1.139      agree  significant decrease
+  Milan north (cell 45.875, 9.125)              -1.375 (  -2.377,  -0.374)   0.00766  0.000676   -0.761      agree  significant decrease
+  Milan south (cell 44.875, 9.125)              -0.381 (  -1.974,  +1.211)     0.632     0.661   -0.496      agree  not enough evidence
+  Milan east (cell 45.375, 9.625)               -1.362 (  -2.912,  +0.187)    0.0835    0.0994   -1.127      agree  not enough evidence
+  Milan west (cell 45.375, 8.625)               -1.737 (  -3.231,  -0.244)    0.0236    0.0277   -1.407      agree  significant decrease
+Bergamo (cell 45.625, 9.625)                    -1.289 (  -2.150,  -0.427)   0.00387   0.00514   -0.736      agree  significant decrease
+  Bergamo north (cell 46.125, 9.625)            +0.549 (  -1.167,  +2.265)     0.526      0.32   +0.090      agree  not enough evidence
+  Bergamo south (cell 45.125, 9.625)            -0.483 (  -1.794,  +0.828)     0.464     0.503   -0.397      agree  not enough evidence
+  Bergamo east (cell 45.625, 10.125)            -1.521 (  -2.495,  -0.547)    0.0026    0.0012   -1.005      agree  significant decrease
+  Bergamo west (cell 45.625, 9.125)             -0.915 (  -1.864,  +0.033)    0.0583     0.021   -0.228      agree  not enough evidence  <- hac_p disagrees
+Po Valley (cell 45.125, 10.125)                 -0.491 (  -1.803,  +0.820)     0.457      0.52   -0.733      agree  not enough evidence
+  Po Valley north (cell 45.625, 10.125)         -1.521 (  -2.495,  -0.547)    0.0026    0.0012   -1.005      agree  significant decrease  [same cell as Bergamo east]
+  Po Valley south (cell 44.625, 10.125)         -0.781 (  -2.700,  +1.137)     0.416     0.477   -0.708      agree  not enough evidence
+  Po Valley east (cell 45.125, 10.625)          -1.122 (  -2.500,  +0.255)     0.108     0.149   -0.927      agree  not enough evidence
+  Po Valley west (cell 45.125, 9.625)           -0.483 (  -1.794,  +0.828)     0.464     0.503   -0.397      agree  not enough evidence  [same cell as Bergamo south]
+   5 of 13 distinct cells significant (15 rows; repeated cells counted once; cells are spatially correlated; counts are not independent confirmations)
+
+-- window 2016-01 to 2025-12
+cell                                         slope/dec              95% CI         p     hac_p      Sen Sen vs OLS  verdict
+Milan (cell 45.375, 9.125)                      +0.257 (  -1.439,  +1.952)     0.762     0.753   +0.046      agree  not enough evidence
+  Milan north (cell 45.875, 9.125)              -0.784 (  -2.787,  +1.218)     0.435     0.243   -0.410      agree  not enough evidence
+  Milan south (cell 44.875, 9.125)              +2.276 (  -0.281,  +4.834)    0.0794    0.0508   +1.820      agree  not enough evidence
+  Milan east (cell 45.375, 9.625)               -0.119 (  -2.685,  +2.448)     0.926     0.919   -0.184      agree  not enough evidence
+  Milan west (cell 45.375, 8.625)               +0.273 (  -2.113,  +2.659)     0.818       0.8   -0.158   DISAGREE  not enough evidence
+Bergamo (cell 45.625, 9.625)                    -0.333 (  -1.637,  +0.971)     0.611     0.622   -0.208      agree  not enough evidence
+  Bergamo north (cell 46.125, 9.625)            +1.536 (  -1.959,  +5.032)     0.381     0.265   +0.302      agree  not enough evidence
+  Bergamo south (cell 45.125, 9.625)            +0.569 (  -1.626,  +2.763)     0.603     0.586   +0.487      agree  not enough evidence
+  Bergamo east (cell 45.625, 10.125)            -0.620 (  -2.201,  +0.960)     0.435      0.36   -0.279      agree  not enough evidence
+  Bergamo west (cell 45.625, 9.125)             +0.175 (  -0.993,  +1.344)     0.763     0.484   +0.055      agree  not enough evidence
+Po Valley (cell 45.125, 10.125)                 +0.110 (  -2.338,  +2.559)     0.928     0.928   -0.238   DISAGREE  not enough evidence
+  Po Valley north (cell 45.625, 10.125)         -0.620 (  -2.201,  +0.960)     0.435      0.36   -0.279      agree  not enough evidence  [same cell as Bergamo east]
+  Po Valley south (cell 44.625, 10.125)         +3.344 (  +0.968,  +5.720)    0.0069   0.00489   +3.141      agree  significant increase
+  Po Valley east (cell 45.125, 10.625)          +0.185 (  -2.208,  +2.578)     0.877     0.878   -0.089   DISAGREE  not enough evidence
+  Po Valley west (cell 45.125, 9.625)           +0.569 (  -1.626,  +2.763)     0.603     0.586   +0.487      agree  not enough evidence  [same cell as Bergamo south]
+   1 of 13 distinct cells significant (15 rows; repeated cells counted once; cells are spatially correlated; counts are not independent confirmations)
+
+======================================================================================================================================================
+PART 2 · leave-one-year-out: GLDAS soil moisture (0–10 cm), window 2011-01 to 2025-12 (15 fits per cell; dropped year's 12 months set to NaN, full-record climatology fixed)
+======================================================================================================================================================
+cell                                                      all years  slope range (15 fits)  p<0.05  coverage_ok  dropped years that flip the verdict
+Milan (cell 45.375, 9.125)                           -1.583 p=0.011    -2.070 to   -1.240   15/15     all pass  none
+  Milan north (cell 45.875, 9.125)                   -1.375 p=0.008    -1.616 to   -1.090   15/15     all pass  none
+  Milan south (cell 44.875, 9.125)                   -0.381 p=0.632    -1.032 to   +0.068    0/15     all pass  none
+  Milan east (cell 45.375, 9.625)                    -1.362 p=0.084    -1.987 to   -0.843    2/15     all pass  2015->sig decrease (p=0.034), 2024->sig decrease (p=0.013)
+  Milan west (cell 45.375, 8.625)                    -1.737 p=0.024    -2.352 to   -1.272   11/15     all pass  2011->n.s. (p=0.058), 2012->n.s. (p=0.056), 2013->n.s. (p=0.075), 2022->n.s. (p=0.068)
+Bergamo (cell 45.625, 9.625)                         -1.289 p=0.004    -1.595 to   -0.944   15/15     all pass  none
+  Bergamo north (cell 46.125, 9.625)                 +0.549 p=0.526    +0.416 to   +0.895    0/15     all pass  none
+  Bergamo south (cell 45.125, 9.625)                 -0.483 p=0.464    -1.045 to   -0.049    0/15     all pass  none
+  Bergamo east (cell 45.625, 10.125)                 -1.521 p=0.003    -1.822 to   -1.207   15/15     all pass  none
+  Bergamo west (cell 45.625, 9.125)                  -0.915 p=0.058    -1.093 to   -0.633    2/15     all pass  2015->sig decrease (p=0.038), 2024->sig decrease (p=0.038)
+Po Valley (cell 45.125, 10.125)                      -0.491 p=0.457    -1.158 to   -0.040    0/15     all pass  none
+  Po Valley north (cell 45.625, 10.125)              -1.521 p=0.003    -1.822 to   -1.207   15/15     all pass  none
+  Po Valley south (cell 44.625, 10.125)              -0.781 p=0.416    -1.628 to   -0.140    0/15     all pass  none
+  Po Valley east (cell 45.125, 10.625)               -1.122 p=0.108    -1.787 to   -0.711    1/15     all pass  2024->sig decrease (p=0.010)
+  Po Valley west (cell 45.125, 9.625)                -0.483 p=0.464    -1.045 to   -0.049    0/15     all pass  none
+
+======================================================================================================================================================
+PART 3 · all configured windows: GPM IMERG precipitation (mm/month per decade), end 2025-12
+======================================================================================================================================================
+
+-- window 2001-01 to 2025-12
+cell                                         slope/dec              95% CI         p     hac_p      Sen Sen vs OLS  verdict
+Milan (cell 45.45, 9.15)                        +2.859 (  -7.190, +12.909)     0.576     0.622   +1.860      agree  not enough evidence
+  Milan north (cell 45.95, 9.15)                +2.322 (  -7.047, +11.690)     0.626     0.684   +2.440      agree  not enough evidence
+  Milan south (cell 44.95, 9.15)                +1.188 (  -8.713, +11.089)     0.813     0.817   +0.000   DISAGREE  not enough evidence
+  Milan east (cell 45.45, 9.65)                 +5.193 (  -4.724, +15.110)     0.303      0.35   +3.231      agree  not enough evidence
+  Milan west (cell 45.45, 8.65)                 -1.273 ( -11.388,  +8.842)     0.804     0.833   -1.667      agree  not enough evidence
+Bergamo (cell 45.65, 9.65)                      +5.049 (  -4.427, +14.525)     0.295     0.358   +3.333      agree  not enough evidence
+  Bergamo north (cell 46.15, 9.65)              +3.580 (  -5.142, +12.303)      0.42     0.514   +4.807      agree  not enough evidence
+  Bergamo south (cell 45.15, 9.65)              +4.403 (  -5.457, +14.264)      0.38     0.402   +2.976      agree  not enough evidence
+  Bergamo east (cell 45.65, 10.15)              +4.681 (  -3.780, +13.142)     0.277     0.327   +3.020      agree  not enough evidence
+  Bergamo west (cell 45.65, 9.15)               +2.797 (  -6.924, +12.518)     0.571     0.629   +2.385      agree  not enough evidence
+Po Valley (cell 45.05, 10.05)                   +4.397 (  -4.327, +13.120)     0.322     0.326   +4.114      agree  not enough evidence
+  Po Valley north (cell 45.55, 10.05)           +4.515 (  -4.461, +13.490)     0.323     0.368   +2.480      agree  not enough evidence
+  Po Valley south (cell 44.55, 10.05)           +4.269 (  -4.367, +12.906)     0.331     0.286   +4.003      agree  not enough evidence
+  Po Valley east (cell 45.05, 10.55)            +4.385 (  -3.142, +11.911)     0.252     0.243   +4.071      agree  not enough evidence
+  Po Valley west (cell 45.05, 9.55)             +4.139 (  -6.048, +14.327)     0.424     0.439   +3.125      agree  not enough evidence
+   0 of 15 distinct cells significant (15 rows; repeated cells counted once; cells are spatially correlated; counts are not independent confirmations)
+
+-- window 2011-01 to 2025-12
+cell                                         slope/dec              95% CI         p     hac_p      Sen Sen vs OLS  verdict
+Milan (cell 45.45, 9.15)                        +6.118 ( -16.608, +28.843)     0.595     0.638   +5.173      agree  not enough evidence
+  Milan north (cell 45.95, 9.15)                +2.494 ( -18.085, +23.072)     0.811     0.832   +4.057      agree  not enough evidence
+  Milan south (cell 44.95, 9.15)                +1.881 ( -20.407, +24.169)     0.868     0.877   +2.840      agree  not enough evidence
+  Milan east (cell 45.45, 9.65)                 +5.039 ( -17.872, +27.949)     0.664     0.709   +5.490      agree  not enough evidence
+  Milan west (cell 45.45, 8.65)                 +6.459 ( -15.334, +28.253)     0.559     0.596   +4.260      agree  not enough evidence
+Bergamo (cell 45.65, 9.65)                      +4.801 ( -16.925, +26.526)     0.663     0.706   +4.960      agree  not enough evidence
+  Bergamo north (cell 46.15, 9.65)              +1.514 ( -17.288, +20.316)     0.874     0.889   +4.960      agree  not enough evidence
+  Bergamo south (cell 45.15, 9.65)              +3.867 ( -18.613, +26.346)     0.734     0.771   +3.824      agree  not enough evidence
+  Bergamo east (cell 45.65, 10.15)              +5.075 ( -14.150, +24.300)     0.603     0.655   +4.632      agree  not enough evidence
+  Bergamo west (cell 45.65, 9.15)               +5.284 ( -16.558, +27.125)     0.633     0.675   +7.320      agree  not enough evidence
+Po Valley (cell 45.05, 10.05)                   +2.542 ( -17.206, +22.291)     0.799     0.832   +5.976      agree  not enough evidence
+  Po Valley north (cell 45.55, 10.05)           +4.793 ( -15.788, +25.373)     0.646     0.695   +5.091      agree  not enough evidence
+  Po Valley south (cell 44.55, 10.05)           +1.371 ( -17.850, +20.593)     0.888     0.906   +4.320      agree  not enough evidence
+  Po Valley east (cell 45.05, 10.55)            +1.196 ( -15.711, +18.103)     0.889     0.912   +6.165      agree  not enough evidence
+  Po Valley west (cell 45.05, 9.55)             +3.624 ( -19.556, +26.805)     0.757     0.789   +4.880      agree  not enough evidence
+   0 of 15 distinct cells significant (15 rows; repeated cells counted once; cells are spatially correlated; counts are not independent confirmations)
+
+-- window 2016-01 to 2025-12   [BELOW the 10-complete-year rule: 9 complete years; the app skips this window]
+cell                                         slope/dec              95% CI         p     hac_p      Sen Sen vs OLS  verdict
+Milan (cell 45.45, 9.15)                       +26.865 ( -12.327, +66.056)     0.177     0.192  +19.344      agree  not enough evidence
+  Milan north (cell 45.95, 9.15)               +16.829 ( -18.312, +51.969)     0.345     0.363  +22.320      agree  not enough evidence
+  Milan south (cell 44.95, 9.15)               +25.257 ( -14.721, +65.234)     0.212     0.139  +24.686      agree  not enough evidence
+  Milan east (cell 45.45, 9.65)                +22.823 ( -15.495, +61.141)      0.24     0.257  +17.280      agree  not enough evidence
+  Milan west (cell 45.45, 8.65)                +31.767 (  -7.431, +70.964)     0.111     0.116  +21.600      agree  not enough evidence
+Bergamo (cell 45.65, 9.65)                     +20.401 ( -15.715, +56.516)     0.265     0.291  +14.400      agree  not enough evidence
+  Bergamo north (cell 46.15, 9.65)             +12.381 ( -20.017, +44.779)     0.451     0.466  +12.400      agree  not enough evidence
+  Bergamo south (cell 45.15, 9.65)             +26.658 ( -11.322, +64.638)     0.167     0.143  +16.120      agree  not enough evidence
+  Bergamo east (cell 45.65, 10.15)             +23.394 (  -8.047, +54.836)     0.143     0.151  +18.000      agree  not enough evidence
+  Bergamo west (cell 45.65, 9.15)              +23.798 ( -13.608, +61.204)      0.21     0.237  +25.200      agree  not enough evidence
+Po Valley (cell 45.05, 10.05)                  +26.473 (  -6.077, +59.023)      0.11    0.0926  +24.300      agree  not enough evidence
+  Po Valley north (cell 45.55, 10.05)          +23.765 (  -9.968, +57.498)     0.165     0.183  +18.600      agree  not enough evidence
+  Po Valley south (cell 44.55, 10.05)          +27.147 (  -5.740, +60.034)     0.105    0.0594  +26.880      agree  not enough evidence
+  Po Valley east (cell 45.05, 10.55)           +23.541 (  -3.574, +50.657)    0.0882    0.0891  +18.000      agree  not enough evidence
+  Po Valley west (cell 45.05, 9.55)            +28.186 ( -11.413, +67.786)     0.161     0.124  +23.808      agree  not enough evidence
+   0 of 15 distinct cells significant (15 rows; repeated cells counted once; cells are spatially correlated; counts are not independent confirmations)
