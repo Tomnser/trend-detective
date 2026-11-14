@@ -6,3 +6,5 @@ scipy>=1.11,<2
 requests>=2.31
 python-dotenv>=1.0
 matplotlib>=3.8
+pytest>=8.0
+statsmodels>=0.14

@@ -53,6 +53,23 @@ def _hac_p_value(x: np.ndarray, y: np.ndarray, beta: np.ndarray, residuals: np.n
     return float(2.0 * stats.norm.sf(z))
 
 
+def years_to_detect(sigma_n: float, omega_per_year: float, phi: float) -> float:
+    """Weatherhead et al. (1998), eq. 3: years of monthly data needed to detect a trend
+    of size omega (prob. 0.9, 5% level):
+
+        n* = [ (3.3 * sigma_N / |omega|) * sqrt((1 + phi) / (1 - phi)) ] ** (2/3)
+
+    Units: sigma_N is the SD of the monthly anomaly residuals (variable units) and
+    omega is the trend in the SAME units PER YEAR, so sigma_N / |omega| is in years
+    and n* comes out in years (the formula is calibrated for monthly data).
+    phi is the lag-1 autocorrelation of the residuals, clipped to [0, 0.95].
+    """
+    if omega_per_year == 0 or not np.isfinite(omega_per_year):
+        return float("inf")
+    phi = float(np.clip(phi, 0.0, 0.95))
+    return float(((3.3 * sigma_n / abs(omega_per_year)) * np.sqrt((1 + phi) / (1 - phi))) ** (2.0 / 3.0))
+
+
 def trend_analysis(
     plan: Plan,
     variable_name: str | None = None,
@@ -109,8 +126,9 @@ def trend_analysis(
     coverage = coverage_ok(series)[1]["frac_present"]
     sen = seasonal_sen_slope(anomalies)
     hac_p = _hac_p_value(x, y, beta, residuals, max_lag=12)
-    # Transparent rough display estimate, not a forecast or a power calculation.
-    years_needed = float(max(10.0, 1.96**2 / abs(slope))) if abs(slope) > 1e-12 else float("inf")
+    # Weatherhead et al. 1998; beta[1] is the slope per YEAR (x is in decimal years).
+    sigma_n = float(np.std(residuals, ddof=1)) if n > 1 else 0.0
+    years_needed = years_to_detect(sigma_n, float(beta[1]), r1)
     settings = {
         "variable": variable,
         "method": method,
@@ -121,9 +139,13 @@ def trend_analysis(
     }
     warnings = [
         "AR(1) effective sample size is a rough adjustment, not a full solution to autocorrelation.",
-        "Years-needed is a rough estimate; it assumes the current rate and AR(1) noise.",
+        "Years-needed (Weatherhead et al. 1998) is a rough estimate; it assumes the current rate and AR(1) noise.",
         "HAC/Newey-West cross-check uses a fixed 12-month Bartlett lag.",
     ]
+    if sen != 0 and slope != 0 and np.sign(sen) != np.sign(slope):
+        warnings.append(f"Seasonal Sen's slope ({sen:+.3f}/decade) points the other way from the OLS slope ({slope:+.3f}/decade); the direction is not robust.")
+    if (hac_p < 0.05) != (p_value < 0.05):
+        warnings.append(f"The HAC p-value ({hac_p:.3g}) and the primary p-value ({p_value:.3g}) fall on opposite sides of 0.05; the significance verdict depends on the method.")
     return TrendResult(
         slope_per_decade=slope,
         ci=ci,
