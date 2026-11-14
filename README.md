@@ -43,7 +43,7 @@ All series come from the NASA GES DISC **Giovanni time-series API** (`https://ap
 ## Method (short)
 
 - **Anomalies:** each month minus that calendar month's mean over the full record (a fixed climatology).
-- **Trend and verdict:** OLS slope of the monthly anomalies. The **verdict uses the adjusted-OLS p-value**: the OLS standard error inflated by an AR(1) effective sample size. In a no-trend simulation (500 series, AR(1) φ = 0.5) its false-positive rate at 0.05 was 4.8%.
+- **Trend and verdict:** OLS slope of the monthly anomalies. The **verdict uses the adjusted-OLS p-value**: the OLS standard error inflated by an AR(1) effective sample size. It gave 4% to 8% false positives in our simulations of 10 to 45 years (`scripts/calibration_grid.txt`); real series can be more complex.
 - **Cross-checks:** the Newey–West HAC p-value and 95% interval (fixed 12-month Bartlett lag) is a cross-check only. The seasonal Sen slope is shown as descriptive only; seasonal Mann–Kendall gave 22% false positives in the same simulation and is not used.
 - **Warnings** appear when Sen's sign disagrees with OLS, or when the HAC and adjusted-OLS p-values fall on opposite sides of 0.05.
 - **Years needed:** Weatherhead et al. (1998), using the residual SD, the lag-1 autocorrelation clipped to [0, 0.95], and the slope per year.

@@ -75,7 +75,7 @@ Water-storage mode, GRACE, SWOT. AI advisor, correlations, CSV upload. A browser
 - [ ] **C3 `[U]` `[A]` Sensitivity sentence.** From the grid: "Of 135 possible windows, 19 look significant: 8 say drier and 11 say wetter." Then: "These windows overlap, so they are not independent tests. The lesson is that the conclusion depends on the window." Optional second line with the Benjamini–Hochberg count, labelled approximate.
 - [ ] **C4 `[E]` + `[U]` "How we got this" explainer.** Four steps with the real numbers and a mini chart each: raw monthly data; remove the seasonal cycle (raw / deseasonalised toggle); fit the trend; judge the uncertainty. Numbers travel in `TrendResult.settings`.
 - [ ] **C5 `[E]` + `[U]` Robustness sentence above the challenge table,** real counts only, for date windows and nearby cells. Remove the two coverage rows. Collapse the table by default.
-- [ ] **C6 `[E]` `[A]` Honest statistics wording.** HAC warning: "HAC rejects too often on records under about 25 years; the verdict uses the adjusted test." Verdict rule: "5% to 8% false positives in our simulations of 10 to 45 years; real series can be more complex." Add `scripts/calibration_grid.py` with its output file.
+- [ ] **C6 `[E]` `[A]` Honest statistics wording.** HAC warning: "HAC rejects too often on short records and on series with strong month-to-month memory; the verdict uses the adjusted test." Verdict rule: "4% to 8% false positives in our simulations of 10 to 45 years; real series can be more complex." Add `scripts/calibration_grid.py` with its output file.
 
 ## D. Reach: places first (parallel, about 3 hours)
 
@@ -117,5 +117,5 @@ Water-storage mode, GRACE, SWOT. AI advisor, correlations, CSV upload. A browser
 | Milan temperature, all windows | 666 windows; 416 significant, all up, none down |
 | Milan temperature, 1981–2025 | +0.489 °C per decade, about 2.2 °C in total |
 | Po Valley rain, April–September total per year | 25 seasons 2001–2025; +22.4 mm per decade, p = 0.40; 2022 = 352 mm, 2nd lowest; mean 481 mm |
-| False-positive rate, adjusted OLS | 3.9% to 8.1% over 10–45 years and lag-1 autocorrelation 0.2–0.8 (AR(1) simulations) |
+| False-positive rate, adjusted OLS | 4% to 8% over 10–45 years and lag-1 autocorrelation 0.2–0.8 (AR(1) simulations) |
 | False-positive rate, HAC (12-month lag) | 13.7% to 22.6% at 10 years; 7.1% to 12.4% at 45 years |

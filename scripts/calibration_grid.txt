@@ -1,0 +1,24 @@
+Calibration grid: 1000 no-trend series per cell, seasonal cycle + AR(1) noise, seed 20261114.
+False-positive rate at 0.05 (a calibrated test gives 5.0%; Monte Carlo SE about 0.7%).
+
+years  lag-1  adjusted OLS (verdict)   HAC, 12-month lag
+   10    0.2                    6.6%               13.5%
+   10    0.5                    7.2%               15.3%
+   10    0.8                    7.2%               21.7%
+   15    0.2                    7.3%               11.4%
+   15    0.5                    5.8%               11.6%
+   15    0.8                    6.0%               19.1%
+   25    0.2                    6.6%               10.0%
+   25    0.5                    5.9%               10.8%
+   25    0.8                    6.6%               17.9%
+   35    0.2                    5.1%                6.7%
+   35    0.5                    6.9%                9.4%
+   35    0.8                    5.8%               15.1%
+   45    0.2                    3.8%                5.5%
+   45    0.5                    7.3%               11.3%
+   45    0.8                    5.4%               13.2%
+
+Adjusted OLS, all cells: 3.8% to 7.3%.
+HAC at 10 years: 13.5% to 21.7%.
+HAC at 45 years: 5.5% to 13.2%.
+Limits: AR(1) noise only. Real series can have longer memory, changing variance or breaks.

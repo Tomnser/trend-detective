@@ -232,7 +232,8 @@ def trend_analysis(
     warnings = [
         "AR(1) effective sample size is a rough adjustment, not a full solution to autocorrelation.",
         "Years-needed (Weatherhead et al. 1998) is a rough estimate; it assumes the current rate and AR(1) noise.",
-        "HAC/Newey-West cross-check uses a fixed 12-month Bartlett lag.",
+        "HAC/Newey-West cross-check uses a fixed 12-month Bartlett lag. HAC rejects too often on short "
+        "records and on series with strong month-to-month memory; the verdict uses the adjusted test.",
     ]
     if sen != 0 and slope != 0 and np.sign(sen) != np.sign(slope):
         warnings.append(f"Seasonal Sen's slope ({sen:+.3f}/decade) points the other way from the OLS slope ({slope:+.3f}/decade); the direction is not robust.")
