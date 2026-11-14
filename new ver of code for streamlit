@@ -1,0 +1,127 @@
+                                "Exploratory sensitivity checks do not adjust for selection bias.",
+                                "Precipitation and soil-moisture adapters are not enabled."]}
+    return {"plan": plan, "series": selected, "anomalies": anomalies,
+            "result": result, "analysis_error": analysis_error,
+            "observations": observations, "evidence": evidence}
+
+def render_chart(frame: pd.DataFrame, y_title: str) -> None:
+    # Separate contiguous segments so missing months never become connecting lines.
+    rows = []
+    for name in frame:
+        series = frame[name]
+        segment = series.isna().cumsum()
+        for timestamp, value in series.dropna().items():
+            rows.append({"date": timestamp.isoformat(), "value": float(value),
+                         "series": name, "segment": f"{name}:{int(segment.loc[timestamp])}"})
+    spec = {"height": 280, "mark": {"type": "line", "point": {"size": 8}},
+            "encoding": {"x": {"field": "date", "type": "temporal", "title": "Month"},
+                         "y": {"field": "value", "type": "quantitative", "title": y_title,
+                               "scale": {"zero": False}},
+                         "color": {"field": "series", "type": "nominal", "title": "Series"},
+                         "detail": {"field": "segment", "type": "nominal"},
+                         "tooltip": [{"field": "date", "type": "temporal"},
+                                     {"field": "value", "type": "quantitative"},
+                                     {"field": "series", "type": "nominal"}]}}
+    if rows:
+        st.vega_lite_chart(pd.DataFrame(rows), spec, use_container_width=True)
+    else:
+        st.info("No observations are available for this chart.")
+
+def render_results(bundle: dict) -> None:
+    plan = bundle["plan"]
+    evidence = bundle["evidence"]
+    source = evidence["provenance"]
+    st.subheader("Applied investigation")
+    st.write(f"{plan.place} · {VARIABLES[plan.variable]['label']} · {plan.start[:7]} to {plan.end[:7]}")
+    unit = VARIABLES[plan.variable]["unit"]
+    st.caption(f"Requested point: {source['query_lat']:.2f}, {source['query_lon']:.2f} · "
+               f"Returned cell: {source.get('cell_lat', 'not supplied')}, {source.get('cell_lon', 'not supplied')}")
+    cache_status = source.get("from_cache")
+    origin = "Saved source data" if cache_status is True else "Fresh source data" if cache_status is False else "Data supplied by your source adapter"
+    st.info(f"{origin} · {source.get('dataset', 'Dataset metadata not supplied')} · "
+            f"Provider request time: {source.get('retrieved', 'not supplied')}")
+    reference = evidence["reference"]
+    st.caption(f"Display units: {unit}. Fixed anomaly reference: {reference['start'][:7]}–{reference['end'][:7]}.")
+    values = pd.DataFrame({f"Value ({unit})": bundle["series"]})
+    st.subheader("Monthly values")
+    render_chart(values, f"Value ({unit})")
+    st.subheader("Monthly anomalies")
+    result = bundle["result"]
+    if result is None:
+        render_chart(pd.DataFrame({"Anomaly": bundle["anomalies"]}), f"Anomaly ({unit})")
+        st.warning(f"Trend unavailable: {bundle['analysis_error']}")
+        st.caption("Available values remain visible; no missing observations are filled.")
+    else:
+        metrics = st.columns(4)
+        metrics[0].metric("Change per decade", f"{result.slope_per_decade:.3f} {unit}")
+        metrics[1].metric(f"95% interval ({unit}/decade)", f"{result.ci[0]:.3f} to {result.ci[1]:.3f}")
+        metrics[2].metric("HAC p-value", f"{result.p:.3g}")
+        metrics[3].metric("Observed months", result.n)
+        st.write(f"Exploratory result: **{result.verdict}**.")
+        st.caption(f"Seasonal Sen’s slope: {result.sen_per_decade:.3f} {unit}/decade (descriptive cross-check only).")
+        # Show an estimated line, without the old inconsistent uncertainty band.
+        t = np.arange(len(bundle["series"])) / 12
+        fitted = bundle["anomalies"].mean() + result.slope_per_decade / 10 * (t - t.mean())
+        render_chart(pd.DataFrame({"Anomaly": bundle["anomalies"], "Fitted trend": fitted}), f"Anomaly ({unit})")
+        for note in result.warnings:
+            st.caption(note)
+    st.subheader("Challenge my finding")
+    st.caption("Date checks reuse the same data and reference. Coverage checks screen the selected record without refitting it.")
+    rows = []
+    for item in evidence["challenges"]:
+        analysis = item.get("analysis")
+        rows.append({"Check": item["check"], "Window / rule": item["label"], "Status": item["status"],
+                     f"{unit}/decade": analysis["slope_per_decade"] if analysis else None,
+                     "95% lower": analysis["ci"][0] if analysis else None,
+                     "95% upper": analysis["ci"][1] if analysis else None,
+                     "p-value": analysis["p"] if analysis else None,
+                     "Interpretation": analysis["verdict"] if analysis else item.get("reason", item.get("note", "")),
+                     "Coverage passes": item.get("passes")})
+    st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+    with st.expander("Values and source metadata"):
+        st.dataframe(bundle["observations"], hide_index=True)
+        st.json(source)
+    st.download_button("Download observations (CSV)", bundle["observations"].to_csv(index=False).encode(),
+                       "source_observations.csv", "text/csv", key="observations_download")
+    st.download_button("Download evidence (JSON)", json.dumps(evidence, indent=2, ensure_ascii=False, allow_nan=False).encode(),
+                       "trend_evidence.json", "application/json", key="evidence_download")
+
+def main() -> None:
+    st.set_page_config(page_title="Trend Detective", page_icon="🌍", layout="wide")
+    st.title("Trend Detective")
+    st.caption("Historical trend analysis using the data supplied by your source modules.")
+    variable = st.selectbox("Variable", list(VARIABLES),
+                            format_func=lambda key: VARIABLES[key]["label"])
+    config = VARIABLES[variable]
+    st.write(config["description"])
+    place = st.selectbox("Location", list(PLACES))
+    with st.form(f"investigation_{variable}"):
+        years = st.slider("Analysis years", config["first_year"], config["last_year"],
+                           (config["first_year"], config["last_year"]))
+        st.caption("Retrieval, credentials and cache reuse are handled by your friend's source module.")
+        submitted = st.form_submit_button("Run investigation", type="primary")
+    if submitted:
+        lat, lon = PLACES[place]
+        plan = Plan(place, lat, lon, variable, f"{years[0]}-01-01", f"{years[1]}-12-01")
+        try:
+            with st.spinner("Waiting for source data and analysing the selected record…"):
+                candidate = run_investigation(plan)
+        except (RuntimeError, ValueError, OSError, ImportError) as error:
+            st.error(str(error))
+            if "applied" in st.session_state:
+                st.warning("The new request failed. The previous applied investigation remains below.")
+        else:
+            st.session_state["applied"] = candidate
+    if "applied" in st.session_state:
+        bundle = st.session_state["applied"]
+        plan = bundle["plan"]
+        if (place, variable, years[0], years[1]) != (plan.place, plan.variable, int(plan.start[:4]), int(plan.end[:4])):
+            st.info("The controls have changed. Submit to update the applied investigation shown below.")
+        render_results(bundle)
+    else:
+        st.info("Keep data_access.py and processing.py beside this app. Then run an investigation to use their returned monthly data.")
+
+
+if __name__ == "__main__":
+    main()
+
