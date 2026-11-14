@@ -1,0 +1,5 @@
+Latency gate, 2026-11-14 19:31 UTC. Point 37.39, -5.99 (Seville). One attempt per variable, no retry, timeout 120 s.
+MERRA2_T2M     2.5 s    13.4 kB  1981-01..2025-12  unit 'K'  cell 37.5, -6.25  540 of 540 months present
+GPM_PRECIP     2.2 s     7.0 kB  2001-01..2025-12  unit 'mm/hr'  cell 37.35, -5.95  297 of 300 months present
+GLDAS_SSM      2.4 s     7.7 kB  2001-01..2025-12  unit 'kg m-2'  cell 37.375, -5.875  300 of 300 months present
+GATE PASSED: slowest fetch 2.5 s, under 20 s. Live 'any place' is safe.
