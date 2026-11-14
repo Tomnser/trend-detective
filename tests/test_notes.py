@@ -5,6 +5,8 @@ from dataclasses import replace
 
 import pytest
 
+import data_access
+
 from analysis import trend_analysis
 from catalogue import PLACES
 from challenge import _method_rows, _neighbour_rows, regional_summary
@@ -12,11 +14,19 @@ from contracts import ChallengeRow, Plan
 from data_access import load_full_series, load_series_for_plan, places_sharing_cell
 
 
-def test_bergamo_and_milan_share_only_the_merra2_cell():
+def test_bergamo_and_milan_share_only_the_merra2_cell(monkeypatch):
+    # Bergamo is no longer a preset; add it by explicit coordinates to test the shared-cell lookup.
+    monkeypatch.setitem(data_access.PLACES, "Bergamo", (45.6983, 9.6773))
     assert places_sharing_cell("MERRA2_T2M", "Bergamo") == ["Milan"]
     assert places_sharing_cell("MERRA2_T2M", "Milan") == ["Bergamo"]
     assert places_sharing_cell("MERRA2_T2M", "Po Valley") == []
     for variable in ("GPM_PRECIP", "GLDAS_SSM"):
+        for place in data_access.PLACES:
+            assert places_sharing_cell(variable, place) == []
+
+
+def test_no_two_presets_share_a_cell():
+    for variable in ("MERRA2_T2M", "GPM_PRECIP", "GLDAS_SSM"):
         for place in PLACES:
             assert places_sharing_cell(variable, place) == []
 
