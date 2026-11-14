@@ -1,562 +1,250 @@
-"""Trend Detective: merged original interface and real-data analysis app.
-
-Merged from the original climate finding checker and the compact real-data app.
-Retains example questions, month controls, coverage, raw/anomaly charts, method
-and date challenges, optional real-neighbour checks, session state and exports.
-Synthetic generators, invented results and the invalid detection-time formula
-are intentionally absent. Your friend's retrieval modules remain separate.
-
-Save this file as app.py beside your friend's ORIGINAL data_access.py and
-processing.py. This file contains NO HTTP client, file extractor, mock generator
-or embedded observations. Your friend's module owns retrieval and caching.
-
-Install app dependencies:
-    python -m pip install streamlit pandas numpy scipy
-Also install your friend's requirements (currently requests and python-dotenv).
-Run:
-    python -m streamlit run app.py
-
-EXISTING GIOVANNI CONTRACT (unchanged):
-    data_access.get_monthly(var_id, lat, lon, start, end) -> pandas.Series
-    processing.to_celsius(series) -> pandas.Series
-    processing.parse_giovanni_csv(text) remains used internally by data_access.
-
-Monthly series: DatetimeIndex; numeric values; NaN for missing months.
-Metadata in series.attrs: units, var_id, dataset, version, cell_lat, cell_lon,
-query_lat, query_lon, retrieved. Never place credentials in series metadata.
-
-To connect another source, add an adapter to SOURCE_LOADERS and a verified
-variable entry to VARIABLES. Each adapter takes the SAME five arguments and
-returns the SAME Series contract. No source-specific retrieval belongs here.
-"""
 from __future__ import annotations
-from dataclasses import asdict, dataclass, field
-from datetime import date
-import importlib
+
 import json
-import numpy as np
+import math
+from dataclasses import asdict
+from datetime import date
+
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
-from scipy import stats
+from plotly.subplots import make_subplots
 
-VARIABLE_ID = "M2IMNXASM_5_12_4_T2M"
-VARIABLES = {VARIABLE_ID: {
-    "label": "MERRA-2 air temperature at 2 m", "source_unit": "K", "unit": "°C",
-    "product": "M2IMNXASM.5.12.4", "version": "5.12.4", "field": "T2M",
-    "doi": "10.5067/5ESKGQTZG7FO", "first_year": 1981, "last_year": 2025,
-    "theme": "temperature", "lat_resolution": 0.5, "lon_resolution": 0.625,
-    "description": "Monthly air temperature from NASA atmospheric reanalysis; a sampled grid cell, not a city average.",
-}}
-PLACES = {"Milan": (45.46, 9.19), "Po Valley point": (45.00, 10.00), "Bergamo": (45.70, 9.68)}
-REFERENCE_START = "1981-01-01"
-REFERENCE_END = "2010-12-01"
+from analysis import trend_analysis, validate_plan
+from catalogue import DEFAULT_VARIABLES, LAST_YEAR, PLACES, get_variable_meta
+from challenge import build_challenge_rows, regional_summary
+from contracts import Plan
+from data_access import load_full_series, load_plan_metadata, load_series_for_plan, places_sharing_cell
+from explanations import result_summary
+from processing import anomaly_series, climatology_for
 
-# Add new sources only after verifying their identifiers and units.
-VARIABLES[VARIABLE_ID].update(source="giovanni", conversion="kelvin_to_celsius",
-                              reference_start=REFERENCE_START, reference_end=REFERENCE_END)
-
-
-
-@dataclass
-class Plan:
-    place: str
-    lat: float
-    lon: float
-    variable: str
-    start: str
-    end: str
-
-@dataclass
-class TrendResult:
-    slope_per_decade: float
-    ci: tuple[float, float]
-    p: float
-    verdict: str
-    n: int
-    coverage: float
-    sen_per_decade: float
-    settings: dict = field(default_factory=dict)
-    warnings: list[str] = field(default_factory=list)
+# (button label, place, variable, start year): examples fill in the form; they don't run it.
+EXAMPLES = [
+    ("Is Milan warming?", "Milan", "MERRA2_T2M", 1981),
+    ("Is the Po Valley getting drier?", "Po Valley", "GPM_PRECIP", 2001),
+    ("Was 2022 a one-off?", "Po Valley", "GPM_PRECIP", 2015),
+]
+VERDICT_RULE = ("**How the verdict is decided:** by the adjusted-OLS p-value (OLS with an AR(1) effective-sample-size "
+                "correction; 4.8% false positives at the 0.05 level in our no-trend simulation). The HAC/Newey–West "
+                "p-value is shown as a cross-check only and does not change the verdict.")
+PRESET_HINT = "Try a preset instead, for example the “Is Milan warming?” button above (Milan · temperature · 1981–2025)."
 
 
-def series_for_window(series: pd.Series, start: str, end: str) -> pd.Series:
-    start_month = pd.Timestamp(start).to_period("M").to_timestamp()
-    end_month = pd.Timestamp(end).to_period("M").to_timestamp()
-    if start_month > end_month:
-        raise ValueError("Choose a start month before the end month.")
-    result = series.reindex(pd.date_range(start_month, end_month, freq="MS"))
-    result.index.name = "time"
-    result.attrs = dict(series.attrs)
-    return result
-
-def coverage(series: pd.Series) -> dict:
-    if series.empty:
-        return {"frac_present": 0.0, "full_years": 0, "min_month_frac": 0.0}
-    series = series_for_window(series, str(series.index.min()), str(series.index.max()))
-    present = pd.Series(np.isfinite(series.to_numpy()), index=series.index)
-    by_year = present.groupby(present.index.year).sum()
-    by_month = present.groupby(present.index.month).mean().reindex(range(1, 13), fill_value=0.)
-    return {"frac_present": float(present.mean()), "full_years": int((by_year == 12).sum()),
-            "min_month_frac": float(by_month.min())}
-
-def monthly_climatology(series: pd.Series) -> pd.Series:
-    return series.groupby(series.index.month).mean()
-
-def monthly_anomalies(series: pd.Series, reference: pd.Series) -> pd.Series:
-    result = series - np.asarray(series.index.month.map(reference), dtype=float)
-    result.attrs = dict(series.attrs)
-    return result
-
-def seasonal_sen_slope(anomalies: pd.Series) -> float:
-    """Median pairwise slope within each calendar month, per decade."""
-    clean = anomalies.dropna().sort_index()
-    slopes = []
-
-    for month in range(1, 13):
-        subset = clean[clean.index.month == month]
-        years = subset.index.year.to_numpy(dtype=float)
-        values = subset.to_numpy(dtype=float)
-
-        for i in range(len(values) - 1):
-            for j in range(i + 1, len(values)):
-                if years[j] != years[i]:
-                    slopes.append(
-                        (values[j] - values[i]) / (years[j] - years[i])
-                    )
-
-    return float(np.median(slopes) * 10.0) if slopes else float("nan")
-
-def analyze_trend(plan: Plan, series: pd.Series,
-                  fixed_climatology: pd.Series) -> TrendResult:
-    """Exploratory OLS with one consistent Bartlett HAC uncertainty estimate.
-
-    Require a complete monthly sequence: observation lags then equal month lags.
-    This demonstration method still requires scientific validation for real data.
-    """
-    expected = series_for_window(series, plan.start, plan.end)
-    if expected.empty or not np.isfinite(expected.to_numpy(dtype=float)).all():
-        raise ValueError("Trend inference requires a complete, finite monthly series. Missing months are not filled.")
-    if coverage(expected)["full_years"] < 10:
-        raise ValueError("Trend inference requires at least ten complete years and adequate coverage.")
-    anomalies = monthly_anomalies(expected, fixed_climatology)
-    if not np.isfinite(anomalies.to_numpy()).all():
-        raise ValueError("The fixed reference is missing calendar-month means.")
-    t = np.arange(len(anomalies), dtype=float) / 12.0
-    design = np.column_stack((np.ones(len(t)), t))
-    coefficients = np.linalg.lstsq(design, anomalies.to_numpy(), rcond=None)[0]
-    residuals = anomalies.to_numpy() - design @ coefficients
-    n = len(t)
-    lag = min(12, n - 1)
-    scores = design * residuals[:, None]
-    meat = scores.T @ scores
-    for offset in range(1, lag + 1):
-        gamma = scores[offset:].T @ scores[:-offset]
-        meat += (1.0 - offset / (lag + 1)) * (gamma + gamma.T)
-    bread = np.linalg.pinv(design.T @ design)
-    covariance = bread @ meat @ bread * n / (n - 2)
-    se = float(np.sqrt(max(covariance[1, 1], 0.0)))
-    slope = float(coefficients[1])
-    if se <= 1e-14:
-        raise ValueError("Residual variation is too small for meaningful uncertainty estimation.")
-    p = float(2 * stats.norm.sf(abs(slope / se)))
-    critical = float(stats.norm.ppf(0.975))
-    ci = ((slope - critical * se) * 10, (slope + critical * se) * 10)
-    verdict = ("significant increase" if slope > 0 else "significant decrease") if p < .05 else "not enough evidence"
-    return TrendResult(
-        slope_per_decade=slope * 10, ci=ci, p=p, verdict=verdict,
-        n=n, coverage=1.0,
-        sen_per_decade=seasonal_sen_slope(anomalies),
-        settings={"method": "OLS on fixed-reference monthly anomalies; Bartlett HAC",
-                  "hac_lag_months": lag, "small_sample_factor": "n/(n-2)",
-                  "reference": "fixed calendar-month means",
-                  "reference_start": VARIABLES[plan.variable]["reference_start"],
-                  "reference_end": VARIABLES[plan.variable]["reference_end"],
-                  "missing_data_policy": "reject gaps for inference; no filling",
-                  "interval": "95% asymptotic normal", "alpha": .05,
-                  "variable": plan.variable, "start": plan.start, "end": plan.end},
-        warnings=["Exploratory estimate: a fixed 12-month HAC lag may not capture longer-term dependence.",
-                  "Sensitivity checks do not correct for selecting an interesting result.",
-                  "Interpret the result using the source definition and spatial footprint; it is not automatically a regional average."])
-
-def load_giovanni_series(var_id: str, lat: float, lon: float,
-                         start: str, end: str) -> pd.Series:
-    """Call your friend's original five-argument function without changing it."""
-    try:
-        module = importlib.import_module("data_access")
-    except ImportError as error:
-        raise RuntimeError(
-            "Place your friend's data_access.py and processing.py beside app.py "
-            f"and install their dependencies. Import problem: {error.name}"
-        ) from error
-    loader = getattr(module, "get_monthly", None)
-    if not callable(loader):
-        raise RuntimeError("data_access.py must expose get_monthly(var_id, lat, lon, start, end).")
-    return loader(var_id, lat, lon, start, end)
+def theme_of(variable: str) -> str:
+    return next(t for t, vs in DEFAULT_VARIABLES.items() if variable in vs)
 
 
-# Other-source adapter example (after your friend implements it):
-# from noaa_access import get_monthly as get_noaa_monthly
-# SOURCE_LOADERS["noaa"] = get_noaa_monthly
-# VARIABLES[VERIFIED_ID] = {
-#     "label": "Verified name", "source": "noaa", "source_unit": "°C",
-#     "unit": "°C", "conversion": "identity", "first_year": 1981,
-#     "last_year": 2025, "reference_start": "1981-01-01",
-#     "reference_end": "2010-12-01", "description": "Verified definition"}
-SOURCE_LOADERS = {"giovanni": load_giovanni_series}
+def set_example(place: str, variable: str, start_year: int) -> None:
+    meta = get_variable_meta(variable)
+    st.session_state["place_choice"] = place
+    st.session_state["theme_choice"] = theme_of(variable)
+    st.session_state["variable_choice"] = variable
+    st.session_state["start_choice"] = date(max(meta["first_year"], start_year), 1, 1)
+    st.session_state["end_choice"] = date(LAST_YEAR, 12, 1)
 
 
-def load_source_series(var_id: str, lat: float, lon: float,
-                       start: str, end: str) -> pd.Series:
-    """Validate the shared return contract; never retrieve or fabricate data."""
-    meta = VARIABLES[var_id]
-    loader = SOURCE_LOADERS.get(meta["source"])
-    if not callable(loader):
-        raise ValueError(f"No adapter registered for source {meta['source']!r}.")
-    raw = loader(var_id, lat, lon, start, end)
-    if not isinstance(raw, pd.Series) or not isinstance(raw.index, pd.DatetimeIndex):
-        raise ValueError("The source adapter must return a pandas.Series with a DatetimeIndex.")
-    if raw.attrs.get("is_synthetic"):
-        raise ValueError("Synthetic data are not accepted by this real-data interface.")
-    if raw.attrs.get("var_id", var_id) != var_id:
-        raise ValueError("The adapter returned a different variable identifier.")
-    if raw.attrs.get("units") != meta["source_unit"]:
-        raise ValueError(f"Expected {meta['source_unit']!r} from the adapter; got {raw.attrs.get('units')!r}.")
-    index = raw.index
-    if index.hasnans:
-        raise ValueError("The source returned invalid dates.")
-    if index.tz is not None:
-        index = index.tz_convert("UTC").tz_localize(None)
-    index = index.to_period("M").to_timestamp()
-    if index.has_duplicates:
-        raise ValueError("Duplicate months: the adapter must aggregate to monthly values first.")
-    attrs = dict(raw.attrs)
-    try:
-        values = pd.to_numeric(raw, errors="raise").to_numpy(dtype=float)
-    except (TypeError, ValueError) as error:
-        raise ValueError("The adapter must return numeric values and missing-value codes as NaN.") from error
-    values[~np.isfinite(values)] = np.nan
-    raw = pd.Series(values, index=index, name=var_id).sort_index()
-    raw.attrs = attrs
-    if not raw.notna().any():
-        raise ValueError("The source returned no usable monthly observations.")
-    if meta["conversion"] == "kelvin_to_celsius":
-        try:
-            converter = importlib.import_module("processing").to_celsius
-        except (ImportError, AttributeError) as error:
-            raise RuntimeError("Your friend's processing.py must expose to_celsius(series).") from error
-        full = converter(raw)
-    elif meta["conversion"] == "identity":
-        full = raw.copy()
-    else:
-        raise ValueError("Register an explicit, verified unit conversion for this variable.")
-    if not isinstance(full, pd.Series) or not full.index.equals(raw.index):
-        raise ValueError("The conversion must preserve monthly dates and return a pandas.Series.")
-    if full.attrs.get("units") != meta["unit"]:
-        raise ValueError("The converter did not return the configured display units.")
-    allowed = ("var_id", "name", "units", "source_units", "conversion", "dataset", "version",
-               "doi", "cell_lat", "cell_lon", "lat_resolution", "lon_resolution", "query_lat",
-               "query_lon", "retrieved", "from_cache", "source", "raw_csv_sha256")
-    metadata = {key: full.attrs[key] for key in allowed if key in full.attrs}
-    metadata.update(var_id=var_id, source_adapter=meta["source"],
-                    query_lat=lat, query_lon=lon, is_synthetic=False)
-    full.attrs = metadata
-    return series_for_window(full, start, end)
+def decimal_year(index: pd.DatetimeIndex) -> pd.Series:
+    return pd.Series(index.year + (index.month - 1) / 12.0, index=index, dtype=float)
 
 
+def trend_figure(series: pd.Series, anomalies: pd.Series, result, unit: str) -> go.Figure:
+    """Raw values on top, anomalies + the engine's own trend and CI band below."""
+    x = decimal_year(anomalies.index)
+    clean = anomalies.notna()
+    # OLS passes through (mean x, mean y) of the fitted points; draw the engine's slope, no refit.
+    x_bar, y_bar = x[clean].mean(), anomalies[clean].mean()
+    b, lo, hi = result.slope_per_decade / 10.0, result.ci[0] / 10.0, result.ci[1] / 10.0  # per year
+    fitted = y_bar + b * (x - x_bar)
+
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.07,
+                        subplot_titles=(f"Monthly values ({unit})", f"Monthly anomalies ({unit})"))
+    # NaN months are passed through (connectgaps=False), so lines break at gaps.
+    fig.add_trace(go.Scatter(x=series.index, y=series, mode="lines", name="Monthly value",
+                             line={"color": "#7f8c8d", "width": 1}, connectgaps=False), row=1, col=1)
+    fig.add_trace(go.Scatter(x=anomalies.index, y=y_bar + hi * (x - x_bar), mode="lines", line={"width": 0},
+                             legendgroup="band", showlegend=False, hoverinfo="skip"), row=2, col=1)
+    fig.add_trace(go.Scatter(x=anomalies.index, y=y_bar + lo * (x - x_bar), mode="lines", line={"width": 0},
+                             fill="tonexty", fillcolor="rgba(31,119,180,0.18)", legendgroup="band",
+                             name="Range of plausible trend slopes (95% CI)", hoverinfo="skip"), row=2, col=1)
+    fig.add_trace(go.Scatter(x=anomalies.index, y=anomalies, mode="lines", name="Monthly anomaly",
+                             line={"color": "#d35400", "width": 1}, connectgaps=False), row=2, col=1)
+    fig.add_trace(go.Scatter(x=anomalies.index, y=fitted, mode="lines", name="Trend",
+                             line={"color": "#1f77b4", "width": 3}), row=2, col=1)
+    fig.update_yaxes(title_text=f"Value ({unit})", row=1, col=1)
+    fig.update_yaxes(title_text=f"Anomaly ({unit})", row=2, col=1)
+    fig.update_xaxes(title_text="Month", row=2, col=1)
+    fig.update_layout(height=640, hovermode="x unified", legend={"orientation": "h", "y": -0.12})
+    return fig
 
 
-def build_challenges(plan: Plan, baseline: TrendResult | None,
-                     baseline_full_series: pd.Series,
-                     baseline_climatology: pd.Series) -> list[dict]:
-    """One shared version of the original date/method/coverage challenge panel."""
-    result, full, reference = baseline, baseline_full_series, baseline_climatology
-    selected = series_for_window(full, plan.start, plan.end)
-    challenges = []
-    config = VARIABLES[plan.variable]
-    windows = {(max(config["first_year"], year), pd.Timestamp(plan.end).year)
-               for year in (1981, 1990, 2000, 2010)}
-    for year, end_year in sorted(windows):
-        if year > end_year:
-            continue
-        start = f"{year}-01-01"
-        variant = Plan(plan.place, plan.lat, plan.lon, plan.variable, start, plan.end)
-        window = series_for_window(full, variant.start, variant.end)
-        try:
-            alternative = analyze_trend(variant, window, reference)
-            item = {"check": "date", "label": f"{start[:7]} to {plan.end[:7]}",
-                    "status": "ok", "plan": asdict(variant), "analysis": asdict(alternative)}
-        except ValueError as error:
-            item = {"check": "date", "label": f"{start[:7]} to {plan.end[:7]}",
-                    "status": "unavailable", "plan": asdict(variant), "reason": str(error)}
-        challenges.append(item)
-    details = coverage(selected)
-    for name, threshold in (("80% overall / 70% per calendar month", (.8, .7)),
-                            ("90% overall / 75% per calendar month", (.9, .75))):
-        challenges.append({"check": "coverage", "label": name, "status": "evaluated",
-                           "passes": details["full_years"] >= 10 and details["frac_present"] >= threshold[0]
-                           and details["min_month_frac"] >= threshold[1],
-                           "note": "Coverage screening only; no trend is refitted. Inference separately requires no monthly gaps."})
-    if result is not None:
-        challenges.append({"check": "method", "label": "OLS with HAC uncertainty (primary)",
-                           "status": "ok", "analysis": asdict(result)})
-        challenges.append({"check": "method", "label": "Seasonal Sen’s slope",
-                           "status": "descriptive", "slope_per_decade": result.sen_per_decade,
-                           "note": "Within-calendar-month median slope; no significance verdict or interval is inferred."})
-    return challenges
+def _num(value: float, fmt: str = "{:.3f}") -> str:
+    """Table cell text; blank for values that are not computed (NaN)."""
+    return fmt.format(value) if math.isfinite(value) else ""
+
+
+def _jsonable(obj):
+    if isinstance(obj, float) and not math.isfinite(obj):
+        return None
+    if isinstance(obj, dict):
+        return {str(k): _jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_jsonable(v) for v in obj]
+    return obj
 
 
 def run_investigation(plan: Plan) -> dict:
-    config = VARIABLES.get(plan.variable)
-    if config is None:
-        raise ValueError("This variable has no verified NASA data adapter.")
-    if pd.Timestamp(plan.start) > pd.Timestamp(plan.end):
-        raise ValueError("Choose a start before the end.")
-    if (pd.Timestamp(plan.start).year < config["first_year"] or
-            pd.Timestamp(plan.end).year > config["last_year"]):
-        raise ValueError("The selected dates are outside the configured data period.")
-    # Request one full record, then reuse it for reference means and all date checks.
-    full = load_source_series(plan.variable, plan.lat, plan.lon,
-                              f"{config['first_year']}-01-01", f"{config['last_year']}-12-01")
-    reference_start, reference_end = config["reference_start"], config["reference_end"]
-    reference_series = series_for_window(full, reference_start, reference_end)
-    if not np.isfinite(reference_series.to_numpy()).all():
-        raise ValueError("The configured fixed reference is incomplete. No alternate baseline was substituted.")
-    reference = monthly_climatology(reference_series)
-    selected = series_for_window(full, plan.start, plan.end)
-    anomalies = monthly_anomalies(selected, reference)
-    result, analysis_error = None, None
+    variable = plan.variables[0]
+    series = load_series_for_plan(plan, variable)
+    full_record = load_full_series(variable, plan.place, plan.lat, plan.lon)
+    validation = validate_plan(plan, series)
+    bundle = {"plan": plan, "series": series, "full": full_record, "validation": validation,
+              "meta": load_plan_metadata(plan), "result": None, "challenges": [], "challenge_error": None,
+              "shared_with": places_sharing_cell(variable, plan.place)}
+    if validation.status != "supported":
+        return bundle
+    bundle["result"] = trend_analysis(plan, variable, series, reference_series=full_record)
     try:
-        result = analyze_trend(plan, selected, reference)
-    except ValueError as error:
-        # The original data can still be inspected and exported.
-        analysis_error = str(error)
-    challenges = build_challenges(plan, result, full, reference)
-    details = coverage(selected)
-    observations = pd.DataFrame({"date": selected.index.strftime("%Y-%m-%d"),
-                                 "value": selected.to_numpy(), "anomaly": anomalies.to_numpy(),
-                                 "units": config["unit"], "source_units": config["source_unit"], "variable": plan.variable,
-                                 "cell_lat": full.attrs.get("cell_lat"), "cell_lon": full.attrs.get("cell_lon"),
-                                 "is_synthetic": False})
-    evidence = {"schema_version": 1, "is_synthetic": False, "plan": asdict(plan),
-                "provenance": full.attrs, "coverage": details,
-                "reference": {"start": reference_start, "end": reference_end,
-                              "calendar_month_means": {int(k): float(v) for k, v in reference.items()}},
-                "analysis": asdict(result) if result else None, "analysis_error": analysis_error,
-                "challenges": challenges,
-                "limitations": ["Spatial footprint depends on the source adapter; do not assume regional coverage.",
-                                "Exploratory sensitivity checks do not adjust for selection bias.",
-                                "Precipitation and soil-moisture adapters are not enabled."]}
-    return {"plan": plan, "series": selected, "anomalies": anomalies,
-            "result": result, "analysis_error": analysis_error,
-            "observations": observations, "evidence": evidence}
+        bundle["challenges"] = build_challenge_rows(plan, bundle["result"])
+    except (RuntimeError, ValueError, OSError) as error:
+        bundle["challenge_error"] = str(error)
+    return bundle
 
-def run_neighbor_checks(bundle: dict) -> list[dict]:
-    """Ask the existing source adapter for real neighbouring cells, on demand.
-
-    This is orchestration only. No network or file extraction is implemented
-    here; each request goes through the same five-argument source adapter.
-    """
-    plan = bundle["plan"]
-    source = bundle["evidence"]["provenance"]
-    config = VARIABLES[plan.variable]
-    lat, lon = source.get("cell_lat"), source.get("cell_lon")
-    dy = source.get("lat_resolution", config.get("lat_resolution"))
-    dx = source.get("lon_resolution", config.get("lon_resolution"))
-    if any(value is None or not np.isfinite(value) for value in (lat, lon, dy, dx)) or dy <= 0 or dx <= 0:
-        return [{"check": "region", "label": "Neighbour checks", "status": "unavailable",
-                 "reason": "The source must provide a verified cell center and grid spacing."}]
-    seen = {(round(float(lat), 5), round(float(lon), 5))}
-    rows = []
-    for dlat, dlon, direction in ((dy, 0., "north"), (-dy, 0., "south"),
-                                  (0., dx, "east"), (0., -dx, "west")):
-        target_lat, target_lon = float(lat + dlat), float((lon + dlon + 180) % 360 - 180)
-        row = {"check": "region", "label": f"{direction} neighbour", "status": "unavailable"}
-        if not -90 <= target_lat <= 90:
-            row["reason"] = "Outside the valid latitude range."
-            rows.append(row)
-            continue
-        variant = Plan(f"{plan.place}: {direction}", target_lat, target_lon,
-                       plan.variable, plan.start, plan.end)
-        row["plan"] = asdict(variant)
-        try:
-            candidate = run_investigation(variant)
-            actual = candidate["evidence"]["provenance"]
-            cell_lat, cell_lon = actual.get("cell_lat"), actual.get("cell_lon")
-            if any(value is None or not np.isfinite(value) for value in (cell_lat, cell_lon)):
-                raise ValueError("The adapter did not identify the returned cell.")
-            cell = (round(float(cell_lat), 5), round(float(cell_lon), 5))
-            if cell in seen:
-                raise ValueError("The returned cell duplicates a cell already checked.")
-            seen.add(cell)
-            if candidate["result"] is None:
-                raise ValueError(candidate["analysis_error"])
-            row.update(status="ok", analysis=asdict(candidate["result"]), provenance=actual,
-                       note="Separate real cell; uses its own fixed-period climatology. This is not a formal test of differences between trends.")
-        except (ValueError, RuntimeError, OSError, ImportError) as error:
-            row["reason"] = str(error)
-        rows.append(row)
-    return rows
-
-
-def set_example(place: str, variable: str = VARIABLE_ID, start_year: int = 1981) -> None:
-    """Example callbacks populate controls; they do not silently run retrieval."""
-    meta = VARIABLES[variable]
-    st.session_state["place_choice"] = place
-    st.session_state["theme_choice"] = meta.get("theme", "other")
-    st.session_state["variable_choice"] = variable
-    st.session_state["start_choice"] = date(max(meta["first_year"], start_year), 1, 1)
-    st.session_state["end_choice"] = date(meta["last_year"], 12, 1)
-
-
-def render_chart(frame: pd.DataFrame, y_title: str) -> None:
-    # Separate contiguous segments so missing months never become connecting lines.
-    rows = []
-    for name in frame:
-        series = frame[name]
-        segment = series.isna().cumsum()
-        for timestamp, value in series.dropna().items():
-            rows.append({"date": timestamp.isoformat(), "value": float(value),
-                         "series": name, "segment": f"{name}:{int(segment.loc[timestamp])}"})
-    spec = {"height": 280, "mark": {"type": "line", "point": {"size": 8}},
-            "encoding": {"x": {"field": "date", "type": "temporal", "title": "Month"},
-                         "y": {"field": "value", "type": "quantitative", "title": y_title,
-                               "scale": {"zero": False}},
-                         "color": {"field": "series", "type": "nominal", "title": "Series"},
-                         "detail": {"field": "segment", "type": "nominal"},
-                         "tooltip": [{"field": "date", "type": "temporal"},
-                                     {"field": "value", "type": "quantitative"},
-                                     {"field": "series", "type": "nominal"}]}}
-    if rows:
-        st.vega_lite_chart(pd.DataFrame(rows), spec, use_container_width=True)
-    else:
-        st.info("No observations are available for this chart.")
 
 def render_results(bundle: dict) -> None:
-    plan = bundle["plan"]
-    evidence = bundle["evidence"]
-    source = evidence["provenance"]
-    st.subheader("Applied investigation")
-    st.write(f"{plan.place} · {VARIABLES[plan.variable]['label']} · {plan.start[:7]} to {plan.end[:7]}")
-    unit = VARIABLES[plan.variable]["unit"]
-    st.caption(f"Requested point: {source['query_lat']:.2f}, {source['query_lon']:.2f} · "
-               f"Returned cell: {source.get('cell_lat', 'not supplied')}, {source.get('cell_lon', 'not supplied')}")
-    cache_status = source.get("from_cache")
-    origin = "Saved source data" if cache_status is True else "Fresh source data" if cache_status is False else "Data supplied by your source adapter"
-    st.info(f"{origin} · {source.get('dataset', 'Dataset metadata not supplied')} · "
-            f"Provider request time: {source.get('retrieved', 'not supplied')}")
-    reference = evidence["reference"]
-    st.caption(f"Display units: {unit}. Fixed anomaly reference: {reference['start'][:7]}–{reference['end'][:7]}.")
-    values = pd.DataFrame({f"Value ({unit})": bundle["series"]})
-    st.subheader("Monthly values")
-    render_chart(values, f"Value ({unit})")
-    st.subheader("Monthly anomalies")
-    result = bundle["result"]
+    plan, series, meta = bundle["plan"], bundle["series"], bundle["meta"]
+    var = get_variable_meta(plan.variables[0])
+    unit = var["display_unit"]
+    req, cell = meta["requested_coordinates"], meta["resolved_cell_coordinates"]
+    st.subheader(f"{plan.place} · {var['label']} · {plan.start[:7]} to {plan.end[:7]}")
+    st.caption(var["definition"])
+    st.caption(f"Requested point: {req['lat']:.2f}, {req['lon']:.2f} · Returned grid cell centre: "
+               f"{cell['lat']}, {cell['lon']} (cell size {meta['grid_resolution']['lat']}° × {meta['grid_resolution']['lon']}°)")
+    st.caption(f"Dataset: {meta['dataset']} · DOI: {meta['doi']} · retrieved {meta['retrieval_time']}"
+               f" · {'from local cache' if meta['from_cache'] else 'downloaded now'}")
+    for other in bundle.get("shared_with", []):
+        st.warning(f"Same grid cell as {other}; not an independent result.")
+
+    validation, result = bundle["validation"], bundle["result"]
     if result is None:
-        render_chart(pd.DataFrame({"Anomaly": bundle["anomalies"]}), f"Anomaly ({unit})")
-        st.warning(f"Trend unavailable: {bundle['analysis_error']}")
-        st.caption("Available values remain visible; no missing observations are filled.")
-    else:
-        st.subheader("Baseline result")
-        metrics = st.columns(4)
-        metrics[0].metric("Change per decade", f"{result.slope_per_decade:.3f} {unit}")
-        metrics[1].metric(f"95% interval ({unit}/decade)", f"{result.ci[0]:.3f} to {result.ci[1]:.3f}")
-        metrics[2].metric("HAC p-value", f"{result.p:.3g}")
-        metrics[3].metric("Observed months", result.n)
-        st.write(f"Exploratory result: **{result.verdict}**.")
-        st.caption(f"Seasonal Sen’s slope: {result.sen_per_decade:.3f} {unit}/decade (descriptive cross-check only).")
-        # Show an estimated line, without the old inconsistent uncertainty band.
-        t = np.arange(len(bundle["series"])) / 12
-        fitted = bundle["anomalies"].mean() + result.slope_per_decade / 10 * (t - t.mean())
-        render_chart(pd.DataFrame({"Anomaly": bundle["anomalies"], "Fitted trend": fitted}), f"Anomaly ({unit})")
-        for note in result.warnings:
-            st.caption(note)
+        st.error(f"{validation.status.title()}: {validation.reason}")
+        st.info(validation.alternative)
+        return
+
+    st.subheader("Baseline result")
+    metrics = st.columns(5)
+    metrics[0].metric("Slope / decade", f"{result.slope_per_decade:.3f} {unit}")
+    metrics[1].metric("95% interval", f"{result.ci[0]:.3f} to {result.ci[1]:.3f}")
+    metrics[2].metric("Primary p-value", f"{result.p:.3g}")
+    metrics[3].metric("Coverage", f"{result.coverage:.1%}")
+    metrics[4].metric("Effective n (rough)", f"{result.n_eff:.0f} / {result.n}")
+    st.markdown(result_summary(result))
+    st.caption(f"Verdict: **{result.verdict}**. HAC/Newey–West 12-month-lag p={result.hac_p:.3g}; seasonal Sen slope={result.sen_per_decade:.3f} per decade. Mann–Kendall is not used for the verdict.")
+    st.markdown(VERDICT_RULE)
+    for warning in result.warnings:
+        st.caption(f"Note: {warning}")
+
+    anomalies = anomaly_series(series, climatology_for(bundle["full"]))
+    st.plotly_chart(trend_figure(series, anomalies, result, unit), width="stretch")
+
     st.subheader("Challenge my finding")
-    st.caption("Neighbour checks may request four additional source records and need your friend's source credentials.")
-    if st.button("Check real neighbouring cells", key="run_neighbours"):
-        with st.spinner("Comparing real source cells…"):
-            evidence["region_challenges"] = run_neighbor_checks(bundle)
-    st.caption("Date checks reuse the same data and reference. Coverage checks screen the selected record without refitting it.")
+    st.caption("A fixed set of date, nearby-cell, method and coverage checks. The baseline above stays visible; variants are not arbitrary user-selected searches.")
+    if bundle["challenge_error"]:
+        st.warning(f"Challenge checks unavailable: {bundle['challenge_error']}")
     rows = []
-    for item in evidence["challenges"] + evidence.get("region_challenges", []):
-        analysis = item.get("analysis")
-        rows.append({"Check": item["check"], "Window / rule": item["label"], "Status": item["status"],
-                     f"{unit}/decade": analysis["slope_per_decade"] if analysis else item.get("slope_per_decade"),
-                     "95% lower": analysis["ci"][0] if analysis else None,
-                     "95% upper": analysis["ci"][1] if analysis else None,
-                     "p-value": analysis["p"] if analysis else None,
-                     "Interpretation": analysis["verdict"] if analysis else item.get("reason", item.get("note", "")),
-                     "Coverage passes": item.get("passes")})
-    st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+    for row in bundle["challenges"]:
+        r = row.result
+        if r is None:  # variant could not be computed; the note says why
+            rows.append({"Check": row.check, "Variant": row.label, "Verdict": "unavailable", "What changes": row.note})
+            continue
+        rows.append({
+            "Check": row.check,
+            "Variant": row.label,
+            f"Slope ({unit}/decade)": round(r.slope_per_decade, 3),
+            "95% low": _num(r.ci[0]),
+            "95% high": _num(r.ci[1]),
+            "p": _num(r.p, "{:.3g}"),
+            "HAC p": _num(r.hac_p, "{:.3g}"),
+            "Coverage": f"{r.coverage:.1%}",
+            "Verdict": r.verdict,
+            "Passes threshold": ("yes" if r.settings.get("coverage_passes_variant") else "no") if row.check == "coverage" else "",
+            "What changes": row.note,
+        })
+    if rows:
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+        st.caption("Regional check: " + regional_summary(bundle["challenges"], result))
+
+    observations = pd.DataFrame({
+        "date": series.index.strftime("%Y-%m-%d"), "value": series.to_numpy(), "anomaly": anomalies.to_numpy(),
+        "units": unit, "variable": plan.variables[0], "cell_lat": cell["lat"], "cell_lon": cell["lon"],
+    })
+    evidence = _jsonable({
+        "plan": asdict(plan), "provenance": meta, "result": asdict(result),
+        "challenges": [{"check": c.check, "label": c.label, "note": c.note,
+                        "result": asdict(c.result) if c.result is not None else None}
+                       for c in bundle["challenges"]],
+    })
     with st.expander("Values and source metadata"):
-        st.dataframe(bundle["observations"], hide_index=True)
-        st.json(source)
-    st.download_button("Download observations (CSV)", bundle["observations"].to_csv(index=False).encode(),
-                       "source_observations.csv", "text/csv", key="observations_download")
-    st.download_button("Download evidence (JSON)", json.dumps(evidence, indent=2, ensure_ascii=False, allow_nan=False).encode(),
-                       "trend_evidence.json", "application/json", key="evidence_download")
+        st.dataframe(observations, hide_index=True)
+        st.json(meta)
+    left, right = st.columns(2)
+    left.download_button("Download observations (CSV)", observations.to_csv(index=False).encode(),
+                         "observations.csv", "text/csv", key="observations_download")
+    right.download_button("Download evidence (JSON)", json.dumps(evidence, indent=2, ensure_ascii=False).encode(),
+                          "trend_evidence.json", "application/json", key="evidence_download")
+
 
 def main() -> None:
     st.set_page_config(page_title="Climate finding checker", page_icon="🌦️", layout="wide")
     st.title("Climate finding checker")
-    st.caption("Explore historical trends and challenge analytical choices using real source data.")
-    st.markdown("**Example investigations**")
-    example_columns = st.columns(3)
-    for column, (label, example_place) in zip(example_columns, (
-            ("Milan warming", "Milan"), ("Po Valley temperature", "Po Valley point"),
-            ("Bergamo temperature", "Bergamo"))):
-        with column:
-            st.button(label, on_click=set_example, args=(example_place,), use_container_width=True)
-    st.caption("Rainfall and soil-moisture investigations become available when verified adapters and variable entries are registered.")
+    st.caption("Explore whether a climate finding is sensitive to reasonable analytical choices. Results are not claims of certainty.")
+
+    st.markdown("**Example questions**")
+    for column, (label, place, variable, start_year) in zip(st.columns(len(EXAMPLES)), EXAMPLES):
+        column.button(label, on_click=set_example, args=(place, variable, start_year), width="stretch")
+
     st.session_state.setdefault("place_choice", "Milan")
-    st.session_state.setdefault("theme_choice", VARIABLES[VARIABLE_ID].get("theme", "temperature"))
-    st.session_state.setdefault("variable_choice", VARIABLE_ID)
-    # Dependent selectors rerun immediately, outside the submit form.
-    themes = sorted({entry.get("theme", "other") for entry in VARIABLES.values()})
-    if st.session_state["theme_choice"] not in themes:
-        st.session_state["theme_choice"] = themes[0]
-    theme = st.selectbox("Theme", themes, key="theme_choice")
-    allowed_variables = [key for key, meta in VARIABLES.items() if meta.get("theme", "other") == theme]
-    if st.session_state["variable_choice"] not in allowed_variables:
-        st.session_state["variable_choice"] = allowed_variables[0]
-    variable = st.selectbox("Variable", allowed_variables,
-                            format_func=lambda key: VARIABLES[key]["label"], key="variable_choice")
-    config = VARIABLES[variable]
-    st.write(config["description"])
-    place = st.selectbox("Location", list(PLACES), key="place_choice")
-    minimum, maximum = date(config["first_year"], 1, 1), date(config["last_year"], 12, 1)
+    st.session_state.setdefault("theme_choice", "temperature")
+    st.subheader("Ask a structured question")
+    # Theme and variable sit outside the form so the variable list follows the theme immediately.
+    col1, col2 = st.columns(2)
+    with col1:
+        place = st.selectbox("Where?", list(PLACES), key="place_choice")
+        theme = st.selectbox("Theme?", list(DEFAULT_VARIABLES), key="theme_choice")
+        options = DEFAULT_VARIABLES[theme]
+        if st.session_state.get("variable_choice") not in options:
+            st.session_state["variable_choice"] = options[0]
+        variable = st.selectbox("Variable", options, format_func=lambda key: get_variable_meta(key)["label"],
+                                key="variable_choice")
+    meta = get_variable_meta(variable)
+    minimum, maximum = date(meta["first_year"], 1, 1), date(LAST_YEAR, 12, 1)
     for key, default in (("start_choice", minimum), ("end_choice", maximum)):
         st.session_state[key] = min(maximum, max(minimum, st.session_state.get(key, default)))
     with st.form("question_flow"):
-        left, right = st.columns(2)
-        with left:
-            start = st.date_input("Start month", min_value=minimum, max_value=maximum, key="start_choice")
-        with right:
-            end = st.date_input("End month", min_value=minimum, max_value=maximum, key="end_choice")
-        st.caption("Dates are interpreted as whole months. Retrieval and caching stay in your friend's source module.")
+        f1, f2 = st.columns(2)
+        start = f1.date_input("Start date", min_value=minimum, max_value=maximum, key="start_choice")
+        end = f2.date_input("End date", min_value=minimum, max_value=maximum, key="end_choice")
+        st.caption(f"{meta['label']}: data available {meta['first_year']}–{LAST_YEAR}. "
+                   "The supported analysis is a monthly trend for one selected variable and location.")
         submitted = st.form_submit_button("Check the finding", type="primary")
+
     if submitted:
         lat, lon = PLACES[place]
-        plan = Plan(place, lat, lon, variable,
-                    pd.Timestamp(start).to_period("M").start_time.date().isoformat(),
-                    pd.Timestamp(end).to_period("M").start_time.date().isoformat())
+        plan = Plan(place=place, lat=lat, lon=lon, variables=[variable], start=start.isoformat(), end=end.isoformat())
         try:
-            with st.spinner("Loading source data and analysing the record…"):
-                candidate = run_investigation(plan)
-        except (RuntimeError, ValueError, OSError, ImportError) as error:
-            st.error(str(error))
+            with st.spinner("Loading NASA data and analysing the record…"):
+                st.session_state["applied"] = run_investigation(plan)
+        except (RuntimeError, ValueError, OSError) as error:
+            st.error(f"Could not load the data for {place} · {meta['label']}: {error}")
+            st.info(PRESET_HINT)
             if "applied" in st.session_state:
-                st.warning("The new request failed. The previous applied investigation remains below.")
-        else:
-            st.session_state["applied"] = candidate
+                st.warning("The previous result is still shown below.")
+
     if "applied" in st.session_state:
         bundle = st.session_state["applied"]
-        plan = bundle["plan"]
-        if (place, variable, str(start)[:7], str(end)[:7]) != (plan.place, plan.variable, plan.start[:7], plan.end[:7]):
-            st.info("The controls have changed. Submit to update the applied investigation shown below.")
+        p = bundle["plan"]
+        if (place, variable, start.isoformat()[:7], end.isoformat()[:7]) != (p.place, p.variables[0], p.start[:7], p.end[:7]):
+            st.info("The inputs have changed. Press “Check the finding” to update the result below.")
         render_results(bundle)
-    else:
-        st.info("Keep your friend's data_access.py and processing.py beside app.py, then check an investigation.")
 
 
-if __name__ == "__main__":
-    main()
+main()
