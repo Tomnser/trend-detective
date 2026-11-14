@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pandas as pd
+from statsmodels.stats.multitest import multipletests
 
 from analysis import trend_analysis
 from catalogue import get_variable_meta
@@ -116,6 +117,34 @@ def _method_rows(plan: Plan, variable: str, full_record: pd.Series, baseline: Tr
                              "Median within-calendar-month pairwise slope; descriptive only. No significance test: seasonal Mann–Kendall "
                              "gave 22% false positives on autocorrelated data in our null simulation."))
     return rows
+
+
+WINDOW_GRID_COLUMNS = ["start", "end", "slope", "ci_low", "ci_high", "p", "verdict", "significant_bh"]
+
+
+def window_grid(plan: Plan, variable: str) -> pd.DataFrame:
+    """One engine fit for every date window of the full record with >= 10 complete years.
+
+    A window runs from January of `start` to December of `end` (years); the last year may be
+    partial. Only the plan's place and coordinates are used. Same engine and fixed full-record
+    climatology as the baseline. `slope`, `ci_low`, `ci_high` are per decade, in display units.
+    `significant_bh` is Benjamini-Hochberg at 0.05 over all windows; the windows overlap, so it
+    is approximate.
+    """
+    full_record = load_full_series(variable, plan.place, plan.lat, plan.lon)
+    first, last = full_record.index[0].year, full_record.index[-1].year
+    rows = []
+    for start in range(first, last + 1):
+        for end in range(start, last + 1):
+            variant = replace(plan, variables=[variable], start=f"{start}-01-01", end=f"{end}-12-01")
+            data = load_series_for_plan(variant, variable)
+            if coverage(data)["full_years"] < MIN_FULL_YEARS:
+                continue
+            r = trend_analysis(variant, variable, data, reference_series=full_record)
+            rows.append((start, end, r.slope_per_decade, r.ci[0], r.ci[1], r.p, r.verdict))
+    grid = pd.DataFrame(rows, columns=WINDOW_GRID_COLUMNS[:-1])
+    grid["significant_bh"] = multipletests(grid["p"], alpha=0.05, method="fdr_bh")[0] if len(grid) else False
+    return grid
 
 
 def build_challenge_rows(plan: Plan, baseline: TrendResult) -> list[ChallengeRow]:

@@ -70,7 +70,7 @@ Water-storage mode, GRACE, SWOT. AI advisor, correlations, CSV upload. A browser
 
 ## C. Differentiate: the window explorer (about 3.5 hours, most effort)
 
-- [ ] **C1 `[E]` `[A]` Window grid.** `challenge.window_grid(plan, variable)`: one engine fit for every start and end year with at least 10 complete years. Same engine, same fixed climatology. Returns a DataFrame (start, end, slope, ci, p, verdict). Tests use the reference numbers below.
+- [x] **C1 `[E]` `[A]` Window grid.** `challenge.window_grid(plan, variable)`: one engine fit for every start and end year with at least 10 complete years. Same engine, same fixed climatology. Returns a DataFrame (start, end, slope, ci, p, verdict). Tests use the reference numbers below.
 - [ ] **C2 `[U]` Window explorer.** A two-handle year slider inside `st.fragment`. Chart, slope and verdict update at once from the cached grid. Beside it a heat map: start year × end year, colour = direction, strong colour = significant. The selected window is marked. The baseline result stays pinned above.
 - [ ] **C3 `[U]` `[A]` Sensitivity sentence.** From the grid: "Of 135 possible windows, 19 look significant: 8 say drier and 11 say wetter." Then: "These windows overlap, so they are not independent tests. The lesson is that the conclusion depends on the window." Optional second line with the Benjamini–Hochberg count, labelled approximate.
 - [ ] **C4 `[E]` + `[U]` "How we got this" explainer.** Four steps with the real numbers and a mini chart each: raw monthly data; remove the seasonal cycle (raw / deseasonalised toggle); fit the trend; judge the uncertainty. Numbers travel in `TrendResult.settings`.
