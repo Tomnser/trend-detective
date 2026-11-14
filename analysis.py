@@ -6,7 +6,7 @@ from scipy import stats
 
 from catalogue import SUPPORTED_VARIABLES
 from contracts import Plan, TrendResult, Validation
-from demo_data import load_series_for_plan
+from data_access import load_series_for_plan
 from processing import anomaly_series, climatology_for, seasonal_sen_slope, series_coverage_ok
 
 

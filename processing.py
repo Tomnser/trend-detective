@@ -53,6 +53,29 @@ def to_celsius(s: pd.Series) -> pd.Series:
     return out
 
 
+def mm_per_hour_to_mm_per_month(s: pd.Series) -> pd.Series:
+    """Monthly-mean rate (mm/hr) -> monthly total: × 24 h × days in that month."""
+    units = s.attrs.get("units")
+    if units not in (None, "mm/hr"):
+        raise ValueError(f"expected units mm/hr, got {units!r}")
+    out = s * 24.0 * s.index.days_in_month.to_numpy()
+    out.attrs = {**s.attrs, "units": "mm/month"}
+    return out
+
+
+def identity(s: pd.Series) -> pd.Series:
+    out = s.copy()
+    out.attrs = dict(s.attrs)
+    return out
+
+
+CONVERTERS = {
+    "kelvin_to_celsius": to_celsius,
+    "mm_per_hour_to_mm_per_month": mm_per_hour_to_mm_per_month,
+    "identity": identity,
+}
+
+
 def coverage(s: pd.Series) -> dict[str, float]:
     """Data completeness of a monthly series.
 

@@ -11,7 +11,7 @@ from analysis import trend_analysis, validate_plan
 from catalogue import DEFAULT_VARIABLES, get_variable_meta
 from challenge import build_challenge_rows
 from contracts import Plan
-from demo_data import load_full_series, load_plan_metadata, load_series_for_plan
+from data_access import load_full_series, load_plan_metadata, load_series_for_plan
 from explanations import result_summary
 from processing import anomaly_series, climatology_for
 
@@ -51,10 +51,10 @@ if submitted:
     full_record = load_full_series(variable, place, lat, lon)
     result = trend_analysis(plan, variable, series, reference_series=full_record)
     meta = get_variable_meta(variable)
-    st.caption(f"{meta['description']} Dataset: {load_plan_metadata(plan)['dataset']}. Target cell at {lat:.4f}, {lon:.4f}.")
+    st.caption(f"{meta['definition']} Dataset: {load_plan_metadata(plan)['dataset']}. Target cell at {lat:.4f}, {lon:.4f}.")
     st.subheader("Baseline result")
     metrics = st.columns(5)
-    metrics[0].metric("Slope / decade", f"{result.slope_per_decade:.3f} {meta['unit']}")
+    metrics[0].metric("Slope / decade", f"{result.slope_per_decade:.3f} {meta['display_unit']}")
     metrics[1].metric("95% interval", f"{result.ci[0]:.3f} to {result.ci[1]:.3f}")
     metrics[2].metric("Primary p-value", f"{result.p:.3g}")
     metrics[3].metric("Coverage", f"{result.coverage:.1%}")
@@ -78,7 +78,7 @@ if submitted:
         fig.add_trace(go.Scatter(x=anomalies.index, y=lower, name="Interval band", fill="tonexty", fillcolor="rgba(41,128,185,0.16)", line={"width": 0}))
         fig.add_trace(go.Scatter(x=anomalies.index, y=anomalies, name="Monthly anomaly", line={"color": "#d35400", "width": 1.5}))
         fig.add_trace(go.Scatter(x=anomalies.index, y=fitted, name="OLS trend", line={"color": "#1f77b4", "width": 3}))
-        fig.update_layout(title="Raw values and monthly anomalies", xaxis_title="Month", yaxis_title=meta["unit"], legend_title="Series")
+        fig.update_layout(title="Raw values and monthly anomalies", xaxis_title="Month", yaxis_title=meta["display_unit"], legend_title="Series")
         st.plotly_chart(fig, use_container_width=True)
 
     st.subheader("Challenge my finding")

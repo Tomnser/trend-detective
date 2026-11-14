@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contracts import ChallengeRow, Plan, TrendResult
 from analysis import trend_analysis
-from demo_data import load_full_series, load_series_for_plan
+from data_access import load_full_series, load_series_for_plan
 from processing import series_coverage_ok
 
 
