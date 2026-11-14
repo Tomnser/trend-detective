@@ -25,6 +25,9 @@ EXAMPLES = [
     ("Is the Po Valley getting drier?", "Po Valley", "GPM_PRECIP", 2001),
     ("Was 2022 a one-off?", "Po Valley", "GPM_PRECIP", 2015),
 ]
+VERDICT_RULE = ("**How the verdict is decided:** by the adjusted-OLS p-value (OLS with an AR(1) effective-sample-size "
+                "correction; 4.8% false positives at the 0.05 level in our no-trend simulation). The HAC/Newey–West "
+                "p-value is shown as a cross-check only and does not change the verdict.")
 PRESET_HINT = "Try a preset instead, for example the “Is Milan warming?” button above (Milan · temperature · 1981–2025)."
 
 
@@ -134,6 +137,7 @@ def render_results(bundle: dict) -> None:
     metrics[4].metric("Effective n (rough)", f"{result.n_eff:.0f} / {result.n}")
     st.markdown(result_summary(result))
     st.caption(f"Verdict: **{result.verdict}**. HAC/Newey–West 12-month-lag p={result.hac_p:.3g}; seasonal Sen slope={result.sen_per_decade:.3f} per decade. Mann–Kendall is not used for the verdict.")
+    st.markdown(VERDICT_RULE)
     for warning in result.warnings:
         st.caption(f"Note: {warning}")
 
