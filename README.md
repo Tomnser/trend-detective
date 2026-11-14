@@ -70,3 +70,6 @@ All series come from the NASA GES DISC **Giovanni time-series API** (`https://ap
 | `explanations.py` | plain-language result summary | Person 2 |
 | `contracts.py` | shared dataclasses (`Plan`, `TrendResult`, `ChallengeRow`) | shared |
 | `scripts/` | smoke test, data checks, challenge check, robustness report (`robustness_report.txt`) | Person 1 |
+| `adapp.py` | **reference only, not the app.** An earlier standalone prototype with an AI "evidence advisor" (OpenAI), kept as a reference for porting that feature into `app.py` later. It has its own statistics and is not tested. | Person 2 |
+
+**The app is `app.py`.** Run `streamlit run app.py`, not `adapp.py`.
