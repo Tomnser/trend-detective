@@ -40,6 +40,11 @@ SEASON_PLACES = ("Po Valley", "Milan")
 SEASON_HOW = {"GPM_PRECIP": "sum", "GLDAS_SSM": "mean"}
 SEASON_MONTHS = [4, 5, 6, 7, 8, 9]
 PRESET_HINT = "Choose an investigation above, for example “How much has Milan warmed?”."
+CUSTOM = "Custom coordinates"
+
+
+def custom_place(lat: float, lon: float) -> str:
+    return f"Custom point {lat:.2f}, {lon:.2f}"
 
 
 def theme_of(variable: str) -> str:
@@ -115,12 +120,13 @@ def run_investigation(plan: Plan) -> dict:
     validation = validate_plan(plan, series)
     bundle = {"plan": plan, "series": series, "full": full_record, "validation": validation,
               "meta": load_plan_metadata(plan), "result": None, "challenges": [], "challenge_error": None,
-              "shared_with": places_sharing_cell(variable, plan.place)}
+              "shared_with": places_sharing_cell(variable, plan.place) if plan.place in PLACES else []}
     if validation.status != "supported":
         return bundle
     bundle["result"] = trend_analysis(plan, variable, series, reference_series=full_record)
     try:
-        bundle["challenges"] = build_challenge_rows(plan, bundle["result"])
+        # A custom point downloads its 4 nearby cells only when the user asks for that check.
+        bundle["challenges"] = build_challenge_rows(plan, bundle["result"], neighbours=plan.place in PLACES)
     except (RuntimeError, ValueError, OSError) as error:
         bundle["challenge_error"] = str(error)
     return bundle
@@ -191,6 +197,14 @@ def render_results(bundle: dict) -> None:
     st.markdown("**Fixed checks: other date windows, nearby cells, other methods**")
     if bundle["challenge_error"]:
         st.warning(f"Challenge checks unavailable: {bundle['challenge_error']}")
+    elif plan.place not in PLACES and not any(r.check == "region" for r in bundle["challenges"]):
+        if st.button("Check the 4 nearby cells (4 NASA downloads)", key="nearby_cells"):
+            try:
+                with st.spinner("Loading the 4 nearby grid cells…"):
+                    bundle["challenges"] = build_challenge_rows(plan, result)
+                st.rerun()  # redraw without the button, with the nearby cells in the checks
+            except (RuntimeError, ValueError, OSError) as error:
+                st.warning(f"Nearby cells unavailable: {error}")
     if bundle["challenges"]:
         st.write(robustness_counts(bundle["challenges"], result)["sentence"])
     rows = []
@@ -215,7 +229,8 @@ def render_results(bundle: dict) -> None:
     if rows:
         with st.expander("Show every check"):
             st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
-            st.caption("Regional check: " + regional_summary(bundle["challenges"], result))
+            if any(r.check == "region" for r in bundle["challenges"]):
+                st.caption("Regional check: " + regional_summary(bundle["challenges"], result))
 
     render_result({**bundle, "section": "limitations"})
 
@@ -250,7 +265,14 @@ def main() -> None:
         # These selectors stay outside the form so their dependent options update immediately.
         left, right = st.columns(2)
         with left:
-            place = st.selectbox("Where?", list(PLACES), key="place_choice")
+            place = st.selectbox("Where?", [*PLACES, CUSTOM], key="place_choice")
+            if place == CUSTOM:
+                lat_in = st.number_input("Latitude (−90 to 90)", min_value=-90.0, max_value=90.0,
+                                         value=PLACES["Milan"][0], step=0.25, format="%.2f", key="lat_choice")
+                lon_in = st.number_input("Longitude (−180 to 180)", min_value=-180.0, max_value=180.0,
+                                         value=PLACES["Milan"][1], step=0.25, format="%.2f", key="lon_choice")
+                st.caption("The result describes the grid cell that contains this point. "
+                           "Points over water or outside a dataset's coverage give a message, never another point.")
             theme = st.selectbox("Theme?", list(DEFAULT_VARIABLES), key="theme_choice")
             options = DEFAULT_VARIABLES[theme]
             if st.session_state.get("variable_choice") not in options:
@@ -264,22 +286,27 @@ def main() -> None:
         with right:
             start = st.date_input("Start date", min_value=minimum, max_value=maximum, key="start_choice")
             end = st.date_input("End date", min_value=minimum, max_value=maximum, key="end_choice")
+    if place == CUSTOM:
+        lat, lon = round(float(lat_in), 2), round(float(lon_in), 2)
+        place_name = custom_place(lat, lon)
+    else:
+        lat, lon = PLACES[place]
+        place_name = place
     with st.form("question_flow"):
-        st.caption(f"Selected: {place} · {meta['label']} · {start:%Y-%m} to {end:%Y-%m}. "
+        st.caption(f"Selected: {place_name} · {meta['label']} · {start:%Y-%m} to {end:%Y-%m}. "
                    "Results describe one sampled grid cell.")
-        prediction = render_prediction({"stage": "choose", "context": f"{place}_{variable}_{start}_{end}"})
+        prediction = render_prediction({"stage": "choose", "context": f"{place_name}_{variable}_{start}_{end}"})
         submitted = st.form_submit_button("Check the finding", type="primary")
 
     if submitted:
-        lat, lon = PLACES[place]
-        plan = Plan(place=place, lat=lat, lon=lon, variables=[variable], start=start.isoformat(), end=end.isoformat())
+        plan = Plan(place=place_name, lat=lat, lon=lon, variables=[variable], start=start.isoformat(), end=end.isoformat())
         try:
             with st.spinner("Loading NASA data and analysing the record…"):
                 candidate = run_investigation(plan)
                 candidate["prediction"] = prediction
                 st.session_state["applied"] = candidate
         except (RuntimeError, ValueError, OSError) as error:
-            st.error(f"Could not load the data for {place} · {meta['label']}: {error}")
+            st.error(f"Could not load the data for {place_name} · {meta['label']}: {error}")
             st.info(PRESET_HINT)
             if "applied" in st.session_state:
                 st.warning("The previous result is still shown below.")
@@ -287,7 +314,7 @@ def main() -> None:
     if "applied" in st.session_state:
         bundle = st.session_state["applied"]
         p = bundle["plan"]
-        if (place, variable, start.isoformat()[:7], end.isoformat()[:7]) != (p.place, p.variables[0], p.start[:7], p.end[:7]):
+        if (place_name, variable, start.isoformat()[:7], end.isoformat()[:7]) != (p.place, p.variables[0], p.start[:7], p.end[:7]):
             st.info("The inputs have changed. Press “Check the finding” to update the result below.")
         render_results(bundle)
 
