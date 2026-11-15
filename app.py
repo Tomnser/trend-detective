@@ -15,7 +15,7 @@ from catalogue import DEFAULT_VARIABLES, LAST_YEAR, PLACES, get_variable_meta
 from challenge import build_challenge_rows, regional_summary, robustness_counts
 from contracts import Plan
 from data_access import load_full_series, load_plan_metadata, load_series_for_plan, places_sharing_cell
-from panels.result import render as render_result
+from panels.result import render as render_result, render_details
 from panels.explorer import render as render_explorer
 from panels.evidence import render as render_evidence
 from panels.explainer import render as render_explainer
@@ -126,29 +126,44 @@ def run_investigation(plan: Plan) -> dict:
     return bundle
 
 
-def render_results(bundle: dict) -> None:
-    plan, series, meta = bundle["plan"], bundle["series"], bundle["meta"]
-    var = get_variable_meta(plan.variables[0])
-    unit = var["display_unit"]
+def _provenance(var: dict, meta: dict) -> None:
+    """Cell centre, dataset, DOI and retrieval date stay visible on every result."""
     req, cell = meta["requested_coordinates"], meta["resolved_cell_coordinates"]
-    st.subheader("1. What was measured, and where?")
-    st.markdown(f"**{plan.place} · {var['label']} · {plan.start[:7]} to {plan.end[:7]}**")
     st.caption(var["definition"])
     st.caption(f"Requested point: {req['lat']:.2f}, {req['lon']:.2f} · Returned grid cell centre: "
                f"{cell['lat']}, {cell['lon']} (cell size {meta['grid_resolution']['lat']}° × {meta['grid_resolution']['lon']}°)")
     st.caption(f"Dataset: {meta['dataset']} · DOI: {meta['doi']} · retrieved {meta['retrieval_time']}"
                f" · {'from local cache' if meta['from_cache'] else 'downloaded now'}")
+
+
+def render_results(bundle: dict) -> None:
+    plan, series, meta = bundle["plan"], bundle["series"], bundle["meta"]
+    var = get_variable_meta(plan.variables[0])
+    unit = var["display_unit"]
+    cell = meta["resolved_cell_coordinates"]
+    st.subheader("Your result")
+    st.markdown(f"**{plan.place} · {var['label']} · {plan.start[:7]} to {plan.end[:7]}**")
     for other in bundle.get("shared_with", []):
         st.warning(f"Same grid cell as {other}; not an independent result.")
 
     validation, result = bundle["validation"], bundle["result"]
     if result is None:
+        _provenance(var, meta)
         st.error(f"{validation.status.title()}: {validation.reason}")
         st.info(validation.alternative)
         return
 
     render_result(bundle)
     render_prediction(bundle)
+    _provenance(var, meta)
+
+    st.subheader("But can you trust this conclusion?")
+    st.write("A trend line depends on which years you pick. Below, the same engine is run on every window "
+             "of ten or more complete years in this record.")
+    render_explorer(bundle)
+
+    st.subheader("The evidence in detail")
+    render_details(bundle)
     render_evidence(bundle)
 
     anomalies = anomaly_series(series, climatology_for(bundle["full"]))
@@ -171,8 +186,6 @@ def render_results(bundle: dict) -> None:
         except (RuntimeError, ValueError) as error:
             st.caption(f"Growing-season view unavailable: {error}")
 
-    st.subheader("4. Does the conclusion survive other reasonable choices?")
-    render_explorer(bundle)
     render_explainer(bundle)
 
     st.markdown("**Fixed checks: other date windows, nearby cells, other methods**")
@@ -229,9 +242,6 @@ def render_results(bundle: dict) -> None:
 
 def main() -> None:
     st.set_page_config(page_title="Trend Detective", page_icon="🌦️", layout="wide")
-    st.title("Trend Detective")
-    st.caption("Same data. Different conclusions. Explore historical trends in NASA Earth data.")
-
     render_home({"examples": EXAMPLES, "on_select": set_example})
 
     st.session_state.setdefault("place_choice", "Milan")
