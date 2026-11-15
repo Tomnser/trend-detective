@@ -157,15 +157,32 @@ def build_challenge_rows(plan: Plan, baseline: TrendResult, neighbours: bool = T
         rows += _neighbour_rows(plan, variable, full_record)
     rows += _method_rows(plan, variable, full_record, baseline)
 
-    data = load_series_for_plan(plan, variable)
-    for label, threshold, month_threshold, note in (
-        ("default threshold", 0.80, 0.70, "Requires >=10 complete years, >=80% of months and >=70% for each calendar month."),
-        ("stricter threshold", 0.90, 0.75, "Requires >=10 complete years, >=90% of months and >=75% for each calendar month."),
-    ):
-        passes, _ = coverage_ok(data, threshold=threshold, month_threshold=month_threshold)
-        threshold_result = TrendResult(**{**baseline.__dict__, "settings": {**baseline.settings, "coverage_threshold": threshold, "month_threshold": month_threshold, "coverage_passes_variant": passes}})
-        rows.append(ChallengeRow("coverage", f"Coverage: {label}", threshold_result, note))
     return rows
+
+
+def robustness_counts(rows: list[ChallengeRow], baseline: TrendResult) -> dict:
+    """Real counts for the robustness sentence: how many date windows and nearby cells agree with the baseline.
+
+    Only computed rows count (rows without a result are left out of the totals). "Same direction"
+    means the slope has the baseline's sign; "significant" means significant in that direction.
+    `sentence` is ready to show; the cells part is omitted when no nearby cell is loaded.
+    """
+    sign = (baseline.slope_per_decade > 0) - (baseline.slope_per_decade < 0)
+    wanted = {1: "significant increase", -1: "significant decrease"}.get(sign)
+    counts = {"baseline_significant": baseline.verdict.startswith("significant")}
+    for key, check in (("windows", "date"), ("cells", "region")):
+        results = [r.result for r in rows if r.check == check and r.result is not None]
+        counts[f"{key}_total"] = len(results)
+        counts[f"{key}_same_direction"] = sum(sign != 0 and r.slope_per_decade * sign > 0 for r in results)
+        counts[f"{key}_significant"] = sum(r.verdict == wanted for r in results)
+    w, c = counts["windows_total"], counts["cells_total"]
+    cells = lambda k: f" and {counts[k]} of {c} nearby cells" if c else ""  # noqa: E731
+    counts["sentence"] = (
+        f"The direction holds in {counts['windows_same_direction']} of {w} date windows{cells('cells_same_direction')}. "
+        f"It is significant in {counts['windows_significant']} of {w} date windows{cells('cells_significant')}. "
+        "Nearby cells and overlapping windows are not independent checks."
+    )
+    return counts
 
 
 def regional_summary(rows: list[ChallengeRow], baseline: TrendResult) -> str:
