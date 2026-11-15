@@ -18,9 +18,33 @@ def _grid(place: str, lat: float, lon: float, variable: str,
     return window_grid(plan, variable)
 
 
+def _examples(grid: pd.DataFrame, plan: Plan, result, lower_word: str, higher_word: str) -> str:
+    """Name real windows from the grid that look significant, and compare them with the chosen window."""
+    span = lambda rows: ", ".join(f"{int(r.start)}–{int(r.end)}" for r in rows.itertuples())  # noqa: E731
+    parts = []
+    for verdict, word in (("significant decrease", lower_word), ("significant increase", higher_word)):
+        chosen = (grid["start"] == int(plan.start[:4])) & (grid["end"] == int(plan.end[:4]))
+        rows = grid.loc[(grid["verdict"] == verdict) & ~chosen].assign(length=lambda d: d["end"] - d["start"])
+        rows = rows.sort_values(["length", "start"], ascending=[False, True]).head(3)
+        if not rows.empty:
+            parts.append(f"Other windows that look significantly {word} include {span(rows)}.")
+    any_significant = bool(parts)
+    if not any_significant and grid["verdict"].str.startswith("significant").any():
+        parts.append("No other window looks significant.")
+    elif not any_significant:
+        parts.append("No window of ten or more complete years looks significant here, "
+                     "so no choice of years gives a confident claim in either direction.")
+    same = int((grid["verdict"] == result.verdict).sum())
+    parts.append(f"Your chosen window, {plan.start[:4]}–{plan.end[:4]}, gives: {result.verdict}. "
+                 f"{same} of {len(grid)} windows give the same verdict.")
+    if any_significant and result.verdict == "not enough evidence":
+        parts.append("Someone who reported only one of the significant windows could make a confident claim "
+                     "that your window does not support.")
+    return " ".join(parts)
+
+
 @st.fragment
 def render(bundle: dict) -> None:
-    st.subheader("Same data. Different conclusions.")
     plan, full = bundle["plan"], bundle["full"]
     variable = plan.variables[0]
     unit = get_variable_meta(variable)["display_unit"]
@@ -39,6 +63,7 @@ def render(bundle: dict) -> None:
     lower_word, higher_word = ("drier", "wetter") if variable in ("GPM_PRECIP", "GLDAS_SSM") else ("cooler", "warmer")
     st.write(f"Of {len(grid)} possible windows, {down + up} look significant: "
              f"{down} {'says' if down == 1 else 'say'} {lower_word} and {up} {'says' if up == 1 else 'say'} {higher_word}.")
+    st.write(_examples(grid, plan, bundle["result"], lower_word, higher_word))
     st.caption("These windows overlap, so they are not independent tests. "
                "The lesson is that the conclusion depends on the window.")
     st.caption("The baseline above stays fixed. Move the handles to inspect another window.")

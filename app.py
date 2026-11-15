@@ -150,6 +150,9 @@ def render_results(bundle: dict) -> None:
 
     anomalies = anomaly_series(series, climatology_for(bundle["full"]))
     st.plotly_chart(trend_figure(series, anomalies, result, unit), width="stretch")
+    st.caption("Top: the monthly values as measured. Bottom: the same months with the normal seasonal cycle "
+               "removed (anomalies), the fitted trend (dark line) and the range of plausible trends "
+               "(shaded band, 95% interval).")
 
     variable = plan.variables[0]
     if plan.place in SEASON_PLACES and variable in SEASON_HOW:

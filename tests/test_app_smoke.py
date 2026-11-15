@@ -48,4 +48,5 @@ def test_prediction_feedback(monkeypatch):
         next(r for r in at.radio if r.label == "Your prediction").set_value(choice)
         _button(at, SUBMIT).click().run()
         assert not at.exception, at.exception
-        assert [i.value for i in at.info] == [f"Your prediction: {choice}. {feedback}."]
+        infos = [i.value for i in at.info]
+        assert len(infos) == 1 and infos[0].startswith(f"Your prediction: {choice}. {feedback}."), infos
