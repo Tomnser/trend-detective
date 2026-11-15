@@ -33,8 +33,15 @@ def render(bundle: dict) -> None:
     anomalies = anomaly_series(series, climatology)
     with st.expander("How we got this"):
         st.markdown("**1. Start with the monthly data**")
+        last = series.last_valid_index()
+        after_end = int((series.index > last).sum()) if last is not None else 0
+        missing = f"{raw['months_missing']} missing"
+        if after_end and after_end == raw["months_missing"]:
+            missing += f": the record ends {last:%Y-%m}"
+        elif after_end:
+            missing += f", {after_end} of them after the record ends {last:%Y-%m}"
         st.write(f"The window {raw['first_month']} to {raw['last_month']} contains {raw['months']} months "
-                 f"({raw['months_missing']} missing), with observed values from {raw['min']:.2f} to "
+                 f"({missing}), with observed values from {raw['min']:.2f} to "
                  f"{raw['max']:.2f} {unit} and a mean of {raw['mean']:.2f} {unit}.")
         st.plotly_chart(_line(series, unit, "Monthly values"), width="stretch")
 
@@ -72,5 +79,6 @@ def render(bundle: dict) -> None:
                                   y=[uncertainty["naive_se_per_decade"], uncertainty["adjusted_se_per_decade"]],
                                   marker_color=["#94a3b8", "#1f77b4"]))
         figure.update_layout(height=190, margin=dict(l=10, r=10, t=15, b=10),
-                             yaxis_title=f"Standard error ({unit}/decade)")
+                             yaxis_title="Standard error")
         st.plotly_chart(figure, width="stretch")
+        st.caption(f"Standard error of the trend, in {unit} per decade.")

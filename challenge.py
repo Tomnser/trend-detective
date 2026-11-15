@@ -175,10 +175,15 @@ def robustness_counts(rows: list[ChallengeRow], baseline: TrendResult) -> dict:
         counts[f"{key}_total"] = len(results)
         counts[f"{key}_same_direction"] = sum(sign != 0 and r.slope_per_decade * sign > 0 for r in results)
         counts[f"{key}_significant"] = sum(r.verdict == wanted for r in results)
+    # Start years the date check tries; those with fewer than 10 complete years are skipped as too short.
+    meta, end = get_variable_meta(baseline.settings.get("variable", "")), baseline.settings.get("end")
+    tried = len([y for y in date_start_years(meta["first_year"]) if f"{y}-01-01" < end]) if meta and end else counts["windows_total"]
+    counts["windows_tried"] = tried
     w, c = counts["windows_total"], counts["cells_total"]
+    short = f" ({tried} tried; {tried - w} too short)" if tried > w else ""
     cells = lambda k: f" and {counts[k]} of {c} nearby cells" if c else ""  # noqa: E731
     counts["sentence"] = (
-        f"The direction holds in {counts['windows_same_direction']} of {w} date windows{cells('cells_same_direction')}. "
+        f"The direction holds in {counts['windows_same_direction']} of {w} date windows{short}{cells('cells_same_direction')}. "
         f"It is significant in {counts['windows_significant']} of {w} date windows{cells('cells_significant')}. "
         "Nearby cells and overlapping windows are not independent checks."
     )

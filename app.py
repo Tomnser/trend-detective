@@ -177,7 +177,7 @@ def render_results(bundle: dict) -> None:
         rows.append({
             "Check": row.check,
             "Variant": row.label,
-            f"Slope ({unit}/decade)": round(r.slope_per_decade, 3),
+            f"Slope ({unit} per decade)": round(r.slope_per_decade, 3),
             "95% low": _num(r.ci[0]),
             "95% high": _num(r.ci[1]),
             "p": _num(r.p, "{:.3g}"),

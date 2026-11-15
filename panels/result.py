@@ -72,8 +72,6 @@ def render(bundle: dict) -> None:
     st.subheader("3. How strong is the statistical evidence?")
     st.write(f"The model's 95% interval runs from {_change(result.ci[0], unit)} "
              f"to {_change(result.ci[1], unit)} per decade.")
-    if result.verdict == "not enough evidence":
-        st.caption("A result without a clear direction does not mean nothing is changing.")
     if variable == "GPM_PRECIP":
         last = bundle["full"].last_valid_index()
         if last is not None and plan.end[:7] > f"{last:%Y-%m}":
@@ -85,6 +83,10 @@ def render(bundle: dict) -> None:
         metrics[2].metric("Monthly coverage", f"{result.coverage:.1%}")
         metrics[3].metric("HAC cross-check p-value", f"{result.hac_p:.3g}")
         st.caption(f"Seasonal Sen slope: {result.sen_per_decade:.3f} {unit} per decade (descriptive cross-check).")
+        if result.sen_per_decade == 0:
+            st.caption("A Sen slope of exactly 0 is not an error. It is a median of year-to-year changes, and here "
+                       "most of them are 0, for example because many months have the same value (dry-season months "
+                       "with no rain).")
         st.markdown(VERDICT_RULE)
         for warning in result.warnings:
             st.caption(f"Note: {warning}")

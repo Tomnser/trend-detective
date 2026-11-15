@@ -57,8 +57,8 @@ def render(bundle: dict) -> None:
         else:
             row = selected.iloc[0]
             st.markdown(f"**Selected window: {start}–{end}**")
-            st.metric(f"Change ({unit}/decade)", f"{row['slope']:+.3f}")
-            st.write(f"95% interval: {row['ci_low']:+.3f} to {row['ci_high']:+.3f} {unit}/decade.")
+            st.metric(f"Change ({unit} per decade)", f"{row['slope']:+.3f}")
+            st.write(f"95% interval: {row['ci_low']:+.3f} to {row['ci_high']:+.3f} {unit} per decade.")
             st.write(f"Engine verdict: **{row['verdict']}**.")
             values = full.loc[f"{start}-01-01":f"{end}-12-31"]
             figure = go.Figure(go.Scatter(x=values.index, y=values, mode="lines",
@@ -87,7 +87,7 @@ def render(bundle: dict) -> None:
                     [.875, "#c2410c"], [1, "#c2410c"]],
         customdata=np.stack([field.to_numpy() for field in fields], axis=-1),
         hoverongaps=False,
-        hovertemplate=("Start %{y}; end %{x}<br>Trend %{customdata[0]:+.3f} " + unit + "/decade"
+        hovertemplate=("Start %{y}; end %{x}<br>Trend %{customdata[0]:+.3f} " + unit + " per decade"
                        "<br>95% interval [%{customdata[1]:+.3f}, %{customdata[2]:+.3f}]<extra></extra>"),
         colorbar=dict(tickvals=[-2, -1, 0, 1, 2],
                       ticktext=["Likely down", "Down, unclear", "Zero slope", "Up, unclear", "Likely up"])))
