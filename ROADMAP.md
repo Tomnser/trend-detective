@@ -58,24 +58,24 @@ Water-storage mode, GRACE, SWOT. AI advisor, correlations, CSV upload. A browser
 - [x] **A1 `[OPS]` Commit `ROADMAP.md` and `CLAUDE.md`** in their own commit and push.
 - [x] **A2 `[OPS]` Pin Streamlit** in `requirements.txt` to the local version (1.67.0).
 - [x] **A3 `[E]` App smoke test,** `tests/test_app_smoke.py` with `streamlit.testing.v1.AppTest`: load the app, click each example, press "Check the finding", assert no exception.
-- [ ] **A4 `[OPS]` Deploy `main`** to Streamlit Community Cloud, Python 3.11, `EDL_TOKEN` as a secret. Open the link in a private window.
-- [ ] **A5 `[U]` `[A]` Fix example 3:** Po Valley rain, 2013-01 to 2022-12, label "Was the Po Valley drying? (the view from 2022)". `EXAMPLES` gains an end year. Check: -39.3 mm/month per decade, p = 0.024.
+- [x] **A4 `[OPS]` Deploy `main`** to Streamlit Community Cloud, Python 3.11, `EDL_TOKEN` as a secret. Open the link in a private window.
+- [x] **A5 `[U]` `[A]` Fix example 3:** Po Valley rain, 2013-01 to 2022-12, label "Was the Po Valley drying? (the view from 2022)". `EXAMPLES` gains an end year. Check: -39.3 mm/month per decade, p = 0.024.
 - [ ] **A6 `[OPS]` `[A]` Move `adapp.py`** to branch `p2-advisor`. Team agreement first.
 
 ## B. Understand (about 1.5 hours)
 
-- [ ] **B1 `[U]` Plain-language result.** Headline with unit and total change. Interval in words. A line "What we cannot conclude" (one grid cell, a linear model, no cause). Move p-value, effective n and HAC into an expander "For the statistically curious". Remove the three permanent method notes from the main view.
-- [ ] **B2 `[U]` Predict → reveal.** Before the result: Rising / Falling / No clear trend. After: "The data support your prediction", "The data point the other way", or "Not enough evidence either way". Add: "Not significant does not mean nothing is changing."
-- [ ] **B3 `[E]` + `[U]` `[A]` Evidence line for "not enough evidence".** The smallest trend this record can detect (Weatherhead inverted). Years needed only under 100 years, labelled "a rough, model-dependent estimate".
+- [x] **B1 `[U]` Plain-language result.** Headline with unit and total change. Interval in words. A line "What we cannot conclude" (one grid cell, a linear model, no cause). Move p-value, effective n and HAC into an expander "For the statistically curious". Remove the three permanent method notes from the main view.
+- [x] **B2 `[U]` Predict → reveal.** Before the result: Rising / Falling / No clear trend. After: "The data support your prediction", "The data point the other way", or "Not enough evidence either way". Add: "Not significant does not mean nothing is changing."
+- [x] **B3 `[E]` + `[U]` `[A]` Evidence line for "not enough evidence".** The smallest trend this record can detect (Weatherhead inverted). Years needed only under 100 years, labelled "a rough, model-dependent estimate".
 
 ## C. Differentiate: the window explorer (about 3.5 hours, most effort)
 
 - [x] **C1 `[E]` `[A]` Window grid.** `challenge.window_grid(plan, variable)`: one engine fit for every start and end year with at least 10 complete years. Same engine, same fixed climatology. Returns a DataFrame (start, end, slope, ci, p, verdict). Tests use the reference numbers below.
-- [ ] **C2 `[U]` Window explorer.** A two-handle year slider inside `st.fragment`. Chart, slope and verdict update at once from the cached grid. Beside it a heat map: start year × end year, colour = direction, strong colour = significant. The selected window is marked. The baseline result stays pinned above.
-- [ ] **C3 `[U]` `[A]` Sensitivity sentence.** From the grid: "Of 135 possible windows, 19 look significant: 8 say drier and 11 say wetter." Then: "These windows overlap, so they are not independent tests. The lesson is that the conclusion depends on the window." Optional second line with the Benjamini–Hochberg count, labelled approximate.
-- [ ] **C4 `[E]` + `[U]` "How we got this" explainer.** Four steps with the real numbers and a mini chart each: raw monthly data; remove the seasonal cycle (raw / deseasonalised toggle); fit the trend; judge the uncertainty. Numbers travel in `TrendResult.settings`.
-- [ ] **C5 `[E]` + `[U]` Robustness sentence above the challenge table,** real counts only, for date windows and nearby cells. Remove the two coverage rows. Collapse the table by default.
-- [ ] **C6 `[E]` `[A]` Honest statistics wording.** HAC warning: "HAC rejects too often on short records and on series with strong month-to-month memory; the verdict uses the adjusted test." Verdict rule: "4% to 8% false positives in our simulations of 10 to 45 years; real series can be more complex." Add `scripts/calibration_grid.py` with its output file.
+- [x] **C2 `[U]` Window explorer.** A two-handle year slider inside `st.fragment`. Chart, slope and verdict update at once from the cached grid. Beside it a heat map: start year × end year, colour = direction, strong colour = significant. The selected window is marked. The baseline result stays pinned above.
+- [x] **C3 `[U]` `[A]` Sensitivity sentence.** From the grid: "Of 135 possible windows, 19 look significant: 8 say drier and 11 say wetter." Then: "These windows overlap, so they are not independent tests. The lesson is that the conclusion depends on the window." Optional second line with the Benjamini–Hochberg count, labelled approximate.
+- [x] **C4 `[E]` + `[U]` "How we got this" explainer.** Four steps with the real numbers and a mini chart each: raw monthly data; remove the seasonal cycle (raw / deseasonalised toggle); fit the trend; judge the uncertainty. Numbers travel in `TrendResult.settings`.
+- [x] **C5 `[E]` + `[U]` Robustness sentence above the challenge table,** real counts only, for date windows and nearby cells. Remove the two coverage rows. Collapse the table by default.
+- [x] **C6 `[E]` `[A]` Honest statistics wording.** HAC warning: "HAC rejects too often on short records and on series with strong month-to-month memory; the verdict uses the adjusted test." Verdict rule: "4% to 8% false positives in our simulations of 10 to 45 years; real series can be more complex." Add `scripts/calibration_grid.py` with its output file.
 
 ## D. Reach: places first (parallel, about 3 hours)
 
@@ -87,9 +87,9 @@ Water-storage mode, GRACE, SWOT. AI advisor, correlations, CSV upload. A browser
 
 ## E. Guide and polish (about 2 hours)
 
-- [ ] **E1 `[U]` Investigation home screen.** Cards: "How much has Milan warmed?", "Is the Po Valley getting drier?", "Was the 2022 drought a trend?", plus one per new preset. One click loads place, variable and window, then asks for the prediction. "Build your own" opens the form.
-- [ ] **E2 `[E]` + `[U]` `[A]` Growing-season investigation.** `analysis.season_trend(series, months, how)`: one value per year, April–September. OLS slope, t-test, interval, plus Sen's slope as a second check and a leave-one-year-out range. Bar chart with 2022 highlighted. Copy: "2022 was the 2nd driest growing season of 25. An extreme year is not a trend: the 25 seasons show none (p = 0.40)."
-- [ ] **E3 `[U]` Verdict card and theme.** Large plain sentence, direction icon, the five questions as the layout of the result page. `.streamlit/config.toml`. One palette for up / down / unclear. One name: "Trend Detective".
+- [x] **E1 `[U]` Investigation home screen.** Cards: "How much has Milan warmed?", "Is the Po Valley getting drier?", "Was the 2022 drought a trend?", plus one per new preset. One click loads place, variable and window, then asks for the prediction. "Build your own" opens the form.
+- [x] **E2 `[E]` + `[U]` `[A]` Growing-season investigation.** `analysis.season_trend(series, months, how)`: one value per year, April–September. OLS slope, t-test, interval, plus Sen's slope as a second check and a leave-one-year-out range. Bar chart with 2022 highlighted. Copy: "2022 was the 2nd driest growing season of 25. An extreme year is not a trend: the 25 seasons show none (p = 0.40)."
+- [x] **E3 `[U]` Verdict card and theme.** Large plain sentence, direction icon, the five questions as the layout of the result page. `.streamlit/config.toml`. One palette for up / down / unclear. One name: "Trend Detective".
 - [ ] **E4 `[U]` Speed and states.** `st.cache_data` on series and grids. No full-page spinner after first load. Friendly loading and error states. Check at phone width.
 - [ ] **E5 `[U]` Glossary tooltips and a small grid-cell depiction** (optional).
 

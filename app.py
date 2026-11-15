@@ -10,37 +10,49 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from analysis import trend_analysis, validate_plan
+from analysis import season_trend, trend_analysis, validate_plan
 from catalogue import DEFAULT_VARIABLES, LAST_YEAR, PLACES, get_variable_meta
-from challenge import build_challenge_rows, regional_summary
+from challenge import build_challenge_rows, regional_summary, robustness_counts
 from contracts import Plan
 from data_access import load_full_series, load_plan_metadata, load_series_for_plan, places_sharing_cell
-from explanations import result_summary
+from panels.result import render as render_result
+from panels.explorer import render as render_explorer
+from panels.evidence import render as render_evidence
+from panels.explainer import render as render_explainer
+from panels.prediction import render as render_prediction
+from panels.home import render as render_home
+from panels.season import render as render_season
 from processing import anomaly_series, climatology_for
 
-# (button label, place, variable, start year): examples fill in the form; they don't run it.
+# (button label, place, variable, start year, end year): examples fill in the form; they don't run it.
 EXAMPLES = [
-    ("Is Milan warming?", "Milan", "MERRA2_T2M", 1981),
-    ("Is the Po Valley getting drier?", "Po Valley", "GPM_PRECIP", 2001),
-    ("Was 2022 a one-off?", "Po Valley", "GPM_PRECIP", 2015),
+    ("How much has Milan warmed?", "Milan", "MERRA2_T2M", 1981, LAST_YEAR),
+    ("Is the Po Valley getting drier?", "Po Valley", "GPM_PRECIP", 2001, LAST_YEAR),
+    ("Was the Po Valley drying? (the view from 2022)", "Po Valley", "GPM_PRECIP", 2013, 2022),
+    ("How has temperature changed near Seville?", "Seville", "MERRA2_T2M", 1981, LAST_YEAR),
+    ("How has rainfall changed near Niamey?", "Niamey", "GPM_PRECIP", 2001, LAST_YEAR),
+    ("How has temperature changed near Fairbanks?", "Fairbanks", "MERRA2_T2M", 1981, LAST_YEAR),
+    ("How has surface soil water changed in Sierra Nevada?", "Sierra Nevada", "GLDAS_SSM", 2001, LAST_YEAR),
+    ("How has rainfall changed at the Murray–Darling Basin point?", "Murray–Darling Basin", "GPM_PRECIP", 2001, LAST_YEAR),
 ]
-VERDICT_RULE = ("**How the verdict is decided:** by the adjusted-OLS p-value (OLS with an AR(1) effective-sample-size "
-                "correction; 4.8% false positives at the 0.05 level in our no-trend simulation). The HAC/Newey–West "
-                "p-value is shown as a cross-check only and does not change the verdict.")
-PRESET_HINT = "Try a preset instead, for example the “Is Milan warming?” button above (Milan · temperature · 1981–2025)."
+# Growing-season view (April–September, one value per year): only where that season applies.
+SEASON_PLACES = ("Po Valley", "Milan")
+SEASON_HOW = {"GPM_PRECIP": "sum", "GLDAS_SSM": "mean"}
+SEASON_MONTHS = [4, 5, 6, 7, 8, 9]
+PRESET_HINT = "Choose an investigation above, for example “How much has Milan warmed?”."
 
 
 def theme_of(variable: str) -> str:
     return next(t for t, vs in DEFAULT_VARIABLES.items() if variable in vs)
 
 
-def set_example(place: str, variable: str, start_year: int) -> None:
+def set_example(place: str, variable: str, start_year: int, end_year: int) -> None:
     meta = get_variable_meta(variable)
     st.session_state["place_choice"] = place
     st.session_state["theme_choice"] = theme_of(variable)
     st.session_state["variable_choice"] = variable
     st.session_state["start_choice"] = date(max(meta["first_year"], start_year), 1, 1)
-    st.session_state["end_choice"] = date(LAST_YEAR, 12, 1)
+    st.session_state["end_choice"] = date(end_year, 12, 1)
 
 
 def decimal_year(index: pd.DatetimeIndex) -> pd.Series:
@@ -55,6 +67,7 @@ def trend_figure(series: pd.Series, anomalies: pd.Series, result, unit: str) -> 
     x_bar, y_bar = x[clean].mean(), anomalies[clean].mean()
     b, lo, hi = result.slope_per_decade / 10.0, result.ci[0] / 10.0, result.ci[1] / 10.0  # per year
     fitted = y_bar + b * (x - x_bar)
+    trend_colour = {"significant increase": "#C2410C", "significant decrease": "#1D4ED8"}.get(result.verdict, "#64748B")
 
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.07,
                         subplot_titles=(f"Monthly values ({unit})", f"Monthly anomalies ({unit})"))
@@ -69,7 +82,7 @@ def trend_figure(series: pd.Series, anomalies: pd.Series, result, unit: str) -> 
     fig.add_trace(go.Scatter(x=anomalies.index, y=anomalies, mode="lines", name="Monthly anomaly",
                              line={"color": "#d35400", "width": 1}, connectgaps=False), row=2, col=1)
     fig.add_trace(go.Scatter(x=anomalies.index, y=fitted, mode="lines", name="Trend",
-                             line={"color": "#1f77b4", "width": 3}), row=2, col=1)
+                             line={"color": trend_colour, "width": 3}), row=2, col=1)
     fig.update_yaxes(title_text=f"Value ({unit})", row=1, col=1)
     fig.update_yaxes(title_text=f"Anomaly ({unit})", row=2, col=1)
     fig.update_xaxes(title_text="Month", row=2, col=1)
@@ -115,7 +128,8 @@ def render_results(bundle: dict) -> None:
     var = get_variable_meta(plan.variables[0])
     unit = var["display_unit"]
     req, cell = meta["requested_coordinates"], meta["resolved_cell_coordinates"]
-    st.subheader(f"{plan.place} · {var['label']} · {plan.start[:7]} to {plan.end[:7]}")
+    st.subheader("1. What was measured, and where?")
+    st.markdown(f"**{plan.place} · {var['label']} · {plan.start[:7]} to {plan.end[:7]}**")
     st.caption(var["definition"])
     st.caption(f"Requested point: {req['lat']:.2f}, {req['lon']:.2f} · Returned grid cell centre: "
                f"{cell['lat']}, {cell['lon']} (cell size {meta['grid_resolution']['lat']}° × {meta['grid_resolution']['lon']}°)")
@@ -130,26 +144,30 @@ def render_results(bundle: dict) -> None:
         st.info(validation.alternative)
         return
 
-    st.subheader("Baseline result")
-    metrics = st.columns(5)
-    metrics[0].metric("Slope / decade", f"{result.slope_per_decade:.3f} {unit}")
-    metrics[1].metric("95% interval", f"{result.ci[0]:.3f} to {result.ci[1]:.3f}")
-    metrics[2].metric("Primary p-value", f"{result.p:.3g}")
-    metrics[3].metric("Coverage", f"{result.coverage:.1%}")
-    metrics[4].metric("Effective n (rough)", f"{result.n_eff:.0f} / {result.n}")
-    st.markdown(result_summary(result))
-    st.caption(f"Verdict: **{result.verdict}**. HAC/Newey–West 12-month-lag p={result.hac_p:.3g}; seasonal Sen slope={result.sen_per_decade:.3f} per decade. Mann–Kendall is not used for the verdict.")
-    st.markdown(VERDICT_RULE)
-    for warning in result.warnings:
-        st.caption(f"Note: {warning}")
+    render_result(bundle)
+    render_prediction(bundle)
+    render_evidence(bundle)
 
     anomalies = anomaly_series(series, climatology_for(bundle["full"]))
     st.plotly_chart(trend_figure(series, anomalies, result, unit), width="stretch")
 
-    st.subheader("Challenge my finding")
-    st.caption("A fixed set of date, nearby-cell, method and coverage checks. The baseline above stays visible; variants are not arbitrary user-selected searches.")
+    variable = plan.variables[0]
+    if plan.place in SEASON_PLACES and variable in SEASON_HOW:
+        try:
+            season = season_trend(bundle["full"], SEASON_MONTHS, SEASON_HOW[variable])
+            render_season({"plan": plan, "result": season})
+        except (RuntimeError, ValueError) as error:
+            st.caption(f"Growing-season view unavailable: {error}")
+
+    st.subheader("4. Does the conclusion survive other reasonable choices?")
+    render_explorer(bundle)
+    render_explainer(bundle)
+
+    st.markdown("**Fixed checks: other date windows, nearby cells, other methods**")
     if bundle["challenge_error"]:
         st.warning(f"Challenge checks unavailable: {bundle['challenge_error']}")
+    if bundle["challenges"]:
+        st.write(robustness_counts(bundle["challenges"], result)["sentence"])
     rows = []
     for row in bundle["challenges"]:
         r = row.result
@@ -170,8 +188,11 @@ def render_results(bundle: dict) -> None:
             "What changes": row.note,
         })
     if rows:
-        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
-        st.caption("Regional check: " + regional_summary(bundle["challenges"], result))
+        with st.expander("Show every check"):
+            st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+            st.caption("Regional check: " + regional_summary(bundle["challenges"], result))
+
+    render_result({**bundle, "section": "limitations"})
 
     observations = pd.DataFrame({
         "date": series.index.strftime("%Y-%m-%d"), "value": series.to_numpy(), "anomaly": anomalies.to_numpy(),
@@ -179,6 +200,7 @@ def render_results(bundle: dict) -> None:
     })
     evidence = _jsonable({
         "plan": asdict(plan), "provenance": meta, "result": asdict(result),
+        "prediction": bundle.get("prediction"),
         "challenges": [{"check": c.check, "label": c.label, "note": c.note,
                         "result": asdict(c.result) if c.result is not None else None}
                        for c in bundle["challenges"]],
@@ -194,37 +216,36 @@ def render_results(bundle: dict) -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title="Climate finding checker", page_icon="🌦️", layout="wide")
-    st.title("Climate finding checker")
-    st.caption("Explore whether a climate finding is sensitive to reasonable analytical choices. Results are not claims of certainty.")
+    st.set_page_config(page_title="Trend Detective", page_icon="🌦️", layout="wide")
+    st.title("Trend Detective")
+    st.caption("Same data. Different conclusions. Explore historical trends in NASA Earth data.")
 
-    st.markdown("**Example questions**")
-    for column, (label, place, variable, start_year) in zip(st.columns(len(EXAMPLES)), EXAMPLES):
-        column.button(label, on_click=set_example, args=(place, variable, start_year), width="stretch")
+    render_home({"examples": EXAMPLES, "on_select": set_example})
 
     st.session_state.setdefault("place_choice", "Milan")
     st.session_state.setdefault("theme_choice", "temperature")
-    st.subheader("Ask a structured question")
-    # Theme and variable sit outside the form so the variable list follows the theme immediately.
-    col1, col2 = st.columns(2)
-    with col1:
-        place = st.selectbox("Where?", list(PLACES), key="place_choice")
-        theme = st.selectbox("Theme?", list(DEFAULT_VARIABLES), key="theme_choice")
-        options = DEFAULT_VARIABLES[theme]
-        if st.session_state.get("variable_choice") not in options:
-            st.session_state["variable_choice"] = options[0]
-        variable = st.selectbox("Variable", options, format_func=lambda key: get_variable_meta(key)["label"],
-                                key="variable_choice")
-    meta = get_variable_meta(variable)
-    minimum, maximum = date(meta["first_year"], 1, 1), date(LAST_YEAR, 12, 1)
-    for key, default in (("start_choice", minimum), ("end_choice", maximum)):
-        st.session_state[key] = min(maximum, max(minimum, st.session_state.get(key, default)))
+    with st.expander("Build your own", expanded=False):
+        # These selectors stay outside the form so their dependent options update immediately.
+        left, right = st.columns(2)
+        with left:
+            place = st.selectbox("Where?", list(PLACES), key="place_choice")
+            theme = st.selectbox("Theme?", list(DEFAULT_VARIABLES), key="theme_choice")
+            options = DEFAULT_VARIABLES[theme]
+            if st.session_state.get("variable_choice") not in options:
+                st.session_state["variable_choice"] = options[0]
+            variable = st.selectbox("Variable", options, format_func=lambda key: get_variable_meta(key)["label"],
+                                    key="variable_choice")
+        meta = get_variable_meta(variable)
+        minimum, maximum = date(meta["first_year"], 1, 1), date(LAST_YEAR, 12, 1)
+        for key, default in (("start_choice", minimum), ("end_choice", maximum)):
+            st.session_state[key] = min(maximum, max(minimum, st.session_state.get(key, default)))
+        with right:
+            start = st.date_input("Start date", min_value=minimum, max_value=maximum, key="start_choice")
+            end = st.date_input("End date", min_value=minimum, max_value=maximum, key="end_choice")
     with st.form("question_flow"):
-        f1, f2 = st.columns(2)
-        start = f1.date_input("Start date", min_value=minimum, max_value=maximum, key="start_choice")
-        end = f2.date_input("End date", min_value=minimum, max_value=maximum, key="end_choice")
-        st.caption(f"{meta['label']}: data available {meta['first_year']}–{LAST_YEAR}. "
-                   "The supported analysis is a monthly trend for one selected variable and location.")
+        st.caption(f"Selected: {place} · {meta['label']} · {start:%Y-%m} to {end:%Y-%m}. "
+                   "Results describe one sampled grid cell.")
+        prediction = render_prediction({"stage": "choose", "context": f"{place}_{variable}_{start}_{end}"})
         submitted = st.form_submit_button("Check the finding", type="primary")
 
     if submitted:
@@ -232,7 +253,9 @@ def main() -> None:
         plan = Plan(place=place, lat=lat, lon=lon, variables=[variable], start=start.isoformat(), end=end.isoformat())
         try:
             with st.spinner("Loading NASA data and analysing the record…"):
-                st.session_state["applied"] = run_investigation(plan)
+                candidate = run_investigation(plan)
+                candidate["prediction"] = prediction
+                st.session_state["applied"] = candidate
         except (RuntimeError, ValueError, OSError) as error:
             st.error(f"Could not load the data for {place} · {meta['label']}: {error}")
             st.info(PRESET_HINT)
