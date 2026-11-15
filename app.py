@@ -66,7 +66,6 @@ def trend_figure(series: pd.Series, anomalies: pd.Series, result, unit: str) -> 
     # OLS passes through (mean x, mean y) of the fitted points; draw the engine's slope, no refit.
     x_bar, y_bar = x[clean].mean(), anomalies[clean].mean()
     b, lo, hi = result.slope_per_decade / 10.0, result.ci[0] / 10.0, result.ci[1] / 10.0  # per year
-    # Keep model lines and the CI band broken wherever the observations/anomalies are missing.
     fitted = (y_bar + b * (x - x_bar)).where(clean)
     band_high = (y_bar + hi * (x - x_bar)).where(clean)
     band_low = (y_bar + lo * (x - x_bar)).where(clean)
@@ -153,7 +152,13 @@ def render_results(bundle: dict) -> None:
     render_evidence(bundle)
 
     anomalies = anomaly_series(series, climatology_for(bundle["full"]))
+    missing_months = int(series.isna().sum())
+    coverage = float(series.notna().mean()) if len(series) else 0.0
     st.plotly_chart(trend_figure(series, anomalies, result, unit), width="stretch")
+    st.caption(
+        f"Coverage in this window: {coverage:.1%} of months present; {missing_months} month(s) are missing and shown as gaps. "
+        "The fitted trend and its 95% band are not drawn through missing months."
+    )
     st.caption("Top: the monthly values as measured. Bottom: the same months with the normal seasonal cycle "
                "removed (anomalies), the fitted trend (dark line) and the range of plausible trends "
                "(shaded band, 95% interval).")
