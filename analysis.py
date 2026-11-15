@@ -255,3 +255,72 @@ def trend_analysis(
         settings=settings,
         warnings=warnings,
     )
+
+
+def season_trend(series: pd.Series, months: list[int], how: str) -> TrendResult:
+    """Trend of one value per year: the sum or mean of the given calendar months (e.g. April-September).
+
+    Only years with every season month present are used. Annual values are close to independent,
+    so this is a plain OLS fit on the yearly values with the ordinary t-test and 95% interval
+    (no autocorrelation adjustment, no HAC). Sen's slope and a leave-one-year-out range are
+    second checks in `settings`; they do not change the verdict.
+    """
+    months = sorted(set(months))
+    if not months or not all(1 <= m <= 12 for m in months):
+        raise ValueError("Season months must be calendar months 1 to 12.")
+    if max(months) - min(months) + 1 != len(months):
+        raise ValueError("Season months must be one consecutive run within a calendar year (for example 4 to 9); "
+                         "seasons that cross the new year are not supported.")
+    if how not in ("sum", "mean"):
+        raise ValueError("how must be 'sum' or 'mean'.")
+    in_season = series[series.index.month.isin(months)]
+    by_year = in_season.groupby(in_season.index.year)
+    complete = by_year.count() == len(months)
+    values = (by_year.sum() if how == "sum" else by_year.mean())[complete]
+    n = len(values)
+    if n < 10:
+        raise ValueError(f"Only {n} years have every season month; at least 10 are needed to fit a trend.")
+    years = values.index.to_numpy(dtype=float)
+    y = values.to_numpy(dtype=float)
+
+    def per_decade(xs: np.ndarray, ys: np.ndarray):
+        fit = stats.linregress(xs, ys)
+        return fit.slope * 10.0, fit.stderr * 10.0, float(fit.pvalue)
+
+    slope, se, p_value = per_decade(years, y)
+    t_critical = float(stats.t.ppf(0.975, df=n - 2))
+    ci = (float(slope - t_critical * se), float(slope + t_critical * se))
+    if p_value < 0.05 and slope > 0:
+        verdict = "significant increase"
+    elif p_value < 0.05 and slope < 0:
+        verdict = "significant decrease"
+    else:
+        verdict = "not enough evidence"
+    residuals = y - (y.mean() + slope / 10.0 * (years - years.mean()))
+    r1 = float(np.corrcoef(residuals[:-1], residuals[1:])[0, 1])
+    pairs = [(y[j] - y[i]) / (years[j] - years[i]) for i in range(n - 1) for j in range(i + 1, n)]
+    sen = float(np.median(pairs) * 10.0)
+    keep = ~np.eye(n, dtype=bool)
+    loo = [per_decade(years[k], y[k])[0] for k in keep]
+    span = int(years[-1] - years[0]) + 1
+    settings = {
+        "mode": "season",
+        "months": months,
+        "how": how,
+        "years": [int(v) for v in years],
+        "values": [float(v) for v in y],  # one per year: season total (sum) or season mean
+        "rank_from_lowest": [int(v) for v in values.rank(method="min")],  # 1 = lowest season on record
+        "mean": float(y.mean()),
+        "years_skipped": [int(v) for v in complete.index[~complete]],  # a season month is missing
+        "leave_one_out_min": float(min(loo)),  # slope per decade with one year removed, lowest and highest
+        "leave_one_out_max": float(max(loo)),
+        "leave_one_out_min_year": int(years[int(np.argmin(loo))]),
+        "leave_one_out_max_year": int(years[int(np.argmax(loo))]),
+    }
+    return TrendResult(
+        slope_per_decade=float(slope), ci=ci, p=p_value, verdict=verdict, n=n, n_eff=float(n), r1=r1,
+        coverage=float(n / span), years_needed=float("nan"), sen_per_decade=sen, hac_p=float("nan"),
+        settings=settings,
+        warnings=["One value per year. An extreme year is not a trend.",
+                  "Plain OLS t-test on yearly values; it assumes the years are independent."],
+    )
