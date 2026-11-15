@@ -13,7 +13,7 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-No token is needed for the 3 preset places × 3 variables: every series the app uses, including the neighbour cells, is in `cache/`. To fetch new places or periods, put an Earthdata Login token in `.env` (never committed):
+No token is needed for the 7 preset places × 3 variables: every series the app uses, including the neighbour cells, is in `cache/`. To fetch new places or periods, put an Earthdata Login token in `.env` (never committed):
 
 ```
 EDL_TOKEN=<your Earthdata Login bearer token>
@@ -38,7 +38,7 @@ All series come from the NASA GES DISC **Giovanni time-series API** (`https://ap
 - The `unit` line of every CSV is checked against the catalogue before converting. A mismatch is an error.
 - Missing values (the file's `undef` code) become NaN. Missing months stay explicit and are never filled.
 - Trailing months that are not yet processed (GPM after 2025-09) are trimmed.
-- Results describe **one grid cell**, not a city. The app shows the requested point next to the returned cell centre. Milan and Bergamo fall in the **same MERRA-2 cell**, and the app says so.
+- Results describe **one grid cell**, not a city. The app shows the requested point next to the returned cell centre. When two places fall in the same grid cell, the app says so. No two presets share a cell.
 
 ## Method (short)
 
@@ -73,3 +73,36 @@ All series come from the NASA GES DISC **Giovanni time-series API** (`https://ap
 | `adapp.py` | **reference only, not the app.** An earlier standalone prototype with an AI "evidence advisor" (OpenAI), kept as a reference for porting that feature into `app.py` later. It has its own statistics and is not tested. | Person 2 |
 
 **The app is `app.py`.** Run `streamlit run app.py`, not `adapp.py`.
+
+## Preset places
+
+Milan and the Po Valley (northern Italy), Seville (Mediterranean), Niamey (Sahel), Fairbanks (subarctic), the Sierra Nevada of California (mountain snow) and the Murray–Darling Basin (semi-arid, Southern Hemisphere). The five places outside Italy were chosen for their climate and for complete data coverage, before looking at any trend result. Each is cached with its 4 neighbour cells.
+
+## Use of AI
+
+- The app has **no AI feature**. Every number on screen is computed by the code in this repository from NASA data.
+- Anthropic's Claude (Claude Code) was used as a coding assistant for the data layer, the trend engine, the tests and this README. The team chose the methods, approved each statistical decision and checked the results against the reference numbers in `ROADMAP.md`.
+- `adapp.py` is an earlier prototype that calls an OpenAI model for an "evidence advisor". It is not part of the app.
+- No AI-generated images, audio or video are used. No NASA branding was altered.
+
+## References
+
+**Data** (NASA GES DISC, through the Giovanni time-series API, https://api.giovanni.earthdata.nasa.gov/timeseries)
+
+- Global Modeling and Assimilation Office (GMAO). MERRA-2 instM_2d_asm_Nx: 2d, Monthly mean, Single-Level, Assimilation, Single-Level Diagnostics V5.12.4 (M2IMNXASM). doi:10.5067/5ESKGQTZG7FO
+- Huffman, G. J., et al. GPM IMERG Final Precipitation L3 1 month 0.1 degree x 0.1 degree V07 (GPM_3IMERGM). doi:10.5067/GPM/IMERG/3B-MONTH/07
+- Beaudoing, H., and M. Rodell. GLDAS Noah Land Surface Model L4 monthly 0.25 x 0.25 degree V2.1 (GLDAS_NOAH025_M). doi:10.5067/SXAVCZFAQLNO
+
+The retrieval date of every series is in its cached CSV (`Request_time`) and is shown in the app.
+
+**Methods**
+
+- Weatherhead, E. C., et al. (1998). Factors affecting the detection of trends: Statistical considerations and applications to environmental data. *Journal of Geophysical Research*, 103(D14), 17149–17161. doi:10.1029/98JD00995
+- Newey, W. K., and K. D. West (1987). A simple, positive semi-definite, heteroskedasticity and autocorrelation consistent covariance matrix. *Econometrica*, 55(3), 703–708. doi:10.2307/1913610
+- Benjamini, Y., and Y. Hochberg (1995). Controlling the false discovery rate: a practical and powerful approach to multiple testing. *Journal of the Royal Statistical Society B*, 57(1), 289–300. doi:10.1111/j.2517-6161.1995.tb02031.x
+- Sen, P. K. (1968). Estimates of the regression coefficient based on Kendall's tau. *Journal of the American Statistical Association*, 63(324), 1379–1389. doi:10.1080/01621459.1968.10480934
+- Hirsch, R. M., J. R. Slack and R. A. Smith (1982). Techniques of trend analysis for monthly water quality data. *Water Resources Research*, 18(1), 107–121. doi:10.1029/WR018i001p00107
+
+**Software**
+
+Python 3.11, Streamlit 1.67.0, pandas, NumPy, SciPy, statsmodels, Plotly, requests, python-dotenv, pytest. Versions are in `requirements.txt`.
