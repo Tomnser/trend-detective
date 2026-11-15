@@ -70,9 +70,8 @@ All series come from the NASA GES DISC **Giovanni time-series API** (`https://ap
 | `explanations.py` | plain-language result summary | Person 2 |
 | `contracts.py` | shared dataclasses (`Plan`, `TrendResult`, `ChallengeRow`) | shared |
 | `scripts/` | smoke test, data checks, challenge check, robustness report (`robustness_report.txt`) | Person 1 |
-| `adapp.py` | **reference only, not the app.** An earlier standalone prototype with an AI "evidence advisor" (OpenAI), kept as a reference for porting that feature into `app.py` later. It has its own statistics and is not tested. | Person 2 |
 
-**The app is `app.py`.** Run `streamlit run app.py`, not `adapp.py`.
+**The app is `app.py`.** An earlier standalone prototype with an AI "evidence advisor" (`adapp.py`, Person 2) is kept on branch `p2-advisor`. It has its own statistics, is not tested and is not part of the app.
 
 ## Preset places
 
@@ -82,7 +81,7 @@ Milan and the Po Valley (northern Italy), Seville (Mediterranean), Niamey (Sahel
 
 - The app has **no AI feature**. Every number on screen is computed by the code in this repository from NASA data.
 - Anthropic's Claude (Claude Code) was used as a coding assistant for the data layer, the trend engine, the tests and this README. The team chose the methods, approved each statistical decision and checked the results against the reference numbers in `ROADMAP.md`.
-- `adapp.py` is an earlier prototype that calls an OpenAI model for an "evidence advisor". It is not part of the app.
+- An earlier prototype, `adapp.py`, calls an OpenAI model for an "evidence advisor". It is kept on branch `p2-advisor` and is not part of the app.
 - No AI-generated images, audio or video are used. No NASA branding was altered.
 
 ## References

@@ -60,7 +60,7 @@ Water-storage mode, GRACE, SWOT. AI advisor, correlations, CSV upload. A browser
 - [x] **A3 `[E]` App smoke test,** `tests/test_app_smoke.py` with `streamlit.testing.v1.AppTest`: load the app, click each example, press "Check the finding", assert no exception.
 - [x] **A4 `[OPS]` Deploy `main`** to Streamlit Community Cloud, Python 3.11, `EDL_TOKEN` as a secret. Open the link in a private window.
 - [x] **A5 `[U]` `[A]` Fix example 3:** Po Valley rain, 2013-01 to 2022-12, label "Was the Po Valley drying? (the view from 2022)". `EXAMPLES` gains an end year. Check: -39.3 mm/month per decade, p = 0.024.
-- [ ] **A6 `[OPS]` `[A]` Move `adapp.py`** to branch `p2-advisor`. Team agreement first.
+- [x] **A6 `[OPS]` `[A]` Move `adapp.py`** to branch `p2-advisor`. Team agreement first.
 
 ## B. Understand (about 1.5 hours)
 
