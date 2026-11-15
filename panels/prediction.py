@@ -17,6 +17,9 @@ def render(bundle: dict):
             feedback = "Not enough evidence either way"
         elif expected.get(prediction) == result.verdict:
             feedback = "The data support your prediction"
+        elif prediction == "No clear trend":
+            direction = "increase" if result.verdict == "significant increase" else "decrease"
+            feedback = f"The data show a likely {direction}"
         else:
             feedback = "The data point the other way"
         st.info(f"Your prediction: {prediction}. {feedback}.")

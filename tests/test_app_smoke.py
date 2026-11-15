@@ -37,3 +37,15 @@ def test_each_example_runs(monkeypatch):
         assert not at.error, (label, [e.value for e in at.error])
         plan = at.session_state["applied"]["plan"]
         print(f"{label!r}: {plan.place} · {plan.variables[0]} · {plan.start[:7]}..{plan.end[:7]} ok")
+
+
+def test_prediction_feedback(monkeypatch):
+    expected = {"Rising": "The data support your prediction", "Falling": "The data point the other way",
+                "No clear trend": "The data show a likely increase"}
+    for choice, feedback in expected.items():
+        at = _load(monkeypatch)
+        _button(at, "How much has Milan warmed?").click().run()
+        next(r for r in at.radio if r.label == "Your prediction").set_value(choice)
+        _button(at, SUBMIT).click().run()
+        assert not at.exception, at.exception
+        assert [i.value for i in at.info] == [f"Your prediction: {choice}. {feedback}."]
