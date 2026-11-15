@@ -39,4 +39,4 @@ def _feedback(prediction: str, result, bundle: dict) -> str:
             text = "The data point the other way."
         text += (f" The fitted trend is {slope}, and the uncertainty is small enough to call the {direction} "
                  "likely in this grid cell.")
-    return text + " Section 4 shows whether the answer changes when you pick other years."
+    return text + " The window explorer below shows whether the answer changes when you pick other years."

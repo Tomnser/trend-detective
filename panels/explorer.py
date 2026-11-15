@@ -83,7 +83,7 @@ def render(bundle: dict) -> None:
             row = selected.iloc[0]
             st.markdown(f"**Selected window: {start}–{end}**")
             st.metric(f"Change ({unit} per decade)", f"{row['slope']:+.3f}")
-            st.write(f"95% interval: {row['ci_low']:+.3f} to {row['ci_high']:+.3f} {unit} per decade.")
+            st.write(f"Range of plausible trends (95% interval): {row['ci_low']:+.3f} to {row['ci_high']:+.3f} {unit} per decade.")
             st.write(f"Engine verdict: **{row['verdict']}**.")
             values = full.loc[f"{start}-01-01":f"{end}-12-31"]
             figure = go.Figure(go.Scatter(x=values.index, y=values, mode="lines",
@@ -115,7 +115,8 @@ def render(bundle: dict) -> None:
         hovertemplate=("Start %{y}; end %{x}<br>Trend %{customdata[0]:+.3f} " + unit + " per decade"
                        "<br>95% interval [%{customdata[1]:+.3f}, %{customdata[2]:+.3f}]<extra></extra>"),
         colorbar=dict(tickvals=[-2, -1, 0, 1, 2],
-                      ticktext=["Likely down", "Down, unclear", "Zero slope", "Up, unclear", "Likely up"])))
+                      ticktext=["Significant decrease", "Decrease, not significant", "Zero slope",
+                                "Increase, not significant", "Significant increase"])))
     heatmap.add_trace(go.Scatter(x=[end], y=[start], mode="markers", showlegend=False,
                                  marker=dict(symbol="square-open", size=16, color="#0f172a", line=dict(width=2)),
                                  hoverinfo="skip"))
@@ -123,6 +124,6 @@ def render(bundle: dict) -> None:
                           margin=dict(l=10, r=10, t=20, b=10))
     with right:
         st.plotly_chart(heatmap, width="stretch")
-        st.caption("Blue = decreasing; orange = increasing. Dark cells meet the engine's "
-                   "significance threshold. Pale cells do not. Empty cells have no eligible window. "
+        st.caption("Blue = decreasing; orange = increasing. Dark cells are a statistically significant "
+                   "trend under the engine's test. Pale cells are not. Empty cells have no eligible window. "
                    "The outlined square marks your selection.")

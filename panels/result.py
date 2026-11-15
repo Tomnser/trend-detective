@@ -41,8 +41,8 @@ def _scale(result, unit: str) -> str | None:
                        "noise. Not significant does not mean no change: the true trend could be zero, or a real "
                        "change too small for this record to detect.")
     return text + ("Compared with those swings and the length of the record, the trend is large enough for the "
-                   "model to call it likely. Likely is not proven: section 4 checks whether it survives other "
-                   "reasonable choices.")
+                   "model to call it likely. Likely is not proven: the window explorer checks whether it "
+                   "survives other choices of years.")
 
 
 def _signed(value: float) -> str:
@@ -68,7 +68,7 @@ def render(bundle: dict) -> None:
     if result is None:
         return  # The existing app handles validation errors before this panel.
     if bundle.get("section") == "limitations":
-        st.subheader("5. What can we not conclude from the data?")
+        st.subheader("What can we not conclude from the data?")
         st.write("This result describes one grid cell. It does not establish the pattern everywhere in the region. "
                  "A straight-line summary does not describe every year or predict future conditions. "
                  "These observations alone cannot identify a cause.")
@@ -95,24 +95,37 @@ def render(bundle: dict) -> None:
     # Only a significant trend gets a total: an inconclusive fit should not read as a measured change.
     if result.verdict != "not enough evidence" and total is not None and math.isfinite(total):
         headline += f" The fitted change over the whole window is {_change(total, unit)}."
-    st.subheader("2. How much did it change?")
     colour, icon = {
         "significant increase": ("#C2410C", "↑"),
         "significant decrease": ("#1D4ED8", "↓"),
     }.get(result.verdict, ("#64748B", "–"))
     st.markdown(
-        f"<div style='border-left:5px solid {colour};padding:18px 20px;"
-        f"background:#FFFFFF;border-radius:8px;'>"
-        f"<p style='font-size:1.3rem;line-height:1.5;margin:0;color:#0F172A;'>"
-        f"<span style='color:{colour};font-weight:700;'>{icon}</span> {escape(headline)}</p></div>",
+        f"<div style='border-left:6px solid {colour};padding:22px 24px;"
+        f"background:#FFFFFF;border-radius:10px;box-shadow:0 1px 3px rgba(15,23,42,.08);'>"
+        f"<p style='font-size:1.45rem;line-height:1.45;margin:0;color:#0F172A;'>"
+        f"<span style='color:{colour};font-weight:700;'>{icon}</span> {escape(headline)}</p>"
+        f"<p style='margin:12px 0 0;color:#475569;'>{escape(_interval(result, unit))}</p></div>",
         unsafe_allow_html=True,
     )
-    st.subheader("3. How strong is the statistical evidence?")
-    st.write(f"The model's 95% interval runs from {_change(result.ci[0], unit)} "
-             f"to {_change(result.ci[1], unit)} per decade.")
+
+
+def _interval(result, unit: str) -> str:
+    """Both bounds are slopes, so both carry the slope unit."""
+    return (f"Range of plausible trends (95% interval): {_signed(result.ci[0])} to "
+            f"{_signed(result.ci[1])} {unit} per decade.")
+
+
+def render_details(bundle: dict) -> None:
+    """The longer explanation and the statistics, shown after the window explorer."""
+    plan, result = bundle["plan"], bundle["result"]
+    if result is None:
+        return
+    variable = plan.variables[0]
+    unit = get_variable_meta(variable)["display_unit"]
     scale = _scale(result, unit)
     if scale:
-        st.write(scale)
+        with st.expander("What does this number mean in practice?"):
+            st.write(scale)
     if variable == "GPM_PRECIP":
         last = bundle["full"].last_valid_index()
         if last is not None and plan.end[:7] > f"{last:%Y-%m}":
